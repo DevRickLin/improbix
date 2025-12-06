@@ -17,7 +17,7 @@
   "crons": [
     {
       "path": "/api/tasks/cron/tick",
-      "schedule": "* * * * *"
+      "schedule": "0 1 * * *"
     }
   ]
 }

@@ -22,6 +22,19 @@ export class AgentService implements OnModuleInit {
     private feishuService: FeishuService,
   ) {}
 
+  private getBeijingTime(): string {
+    return new Date().toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  }
+
   onModuleInit() {
     // 创建包含自定义工具的 MCP server
     this.customServer = createSdkMcpServer({
@@ -33,16 +46,23 @@ export class AgentService implements OnModuleInit {
           'Search the internet for latest news and information. Use this to find information on Hacker News, Reddit, or other sources.',
           { query: z.string().describe('The search query') },
           async (args) => {
-            this.logger.log(`Executing search for: ${args.query}`);
+            const startTime = Date.now();
+            this.logger.log(`[Tool:search_internet] >>> INPUT: ${JSON.stringify(args)}`);
             try {
               const result = await this.searchService.search(args.query);
+              const duration = Date.now() - startTime;
+              const resultText = typeof result === 'string' ? result : JSON.stringify(result);
+              const resultPreview = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
+              this.logger.log(`[Tool:search_internet] <<< OUTPUT (${duration}ms): ${resultPreview}`);
               return {
                 content: [{
                   type: 'text' as const,
-                  text: typeof result === 'string' ? result : JSON.stringify(result),
+                  text: resultText,
                 }],
               };
             } catch (e: any) {
+              const duration = Date.now() - startTime;
+              this.logger.error(`[Tool:search_internet] <<< ERROR (${duration}ms): ${e.message}`);
               return {
                 content: [{ type: 'text' as const, text: `Error searching: ${e.message}` }],
               };
@@ -54,13 +74,19 @@ export class AgentService implements OnModuleInit {
           'Send a message or summary to Feishu (Lark).',
           { message: z.string().describe('The message content to send') },
           async (args) => {
-            this.logger.log('Sending Feishu message...');
+            const startTime = Date.now();
+            const messagePreview = args.message.length > 200 ? args.message.substring(0, 200) + '...' : args.message;
+            this.logger.log(`[Tool:send_feishu_message] >>> INPUT: ${JSON.stringify({ message: messagePreview })}`);
             try {
               await this.feishuService.sendText(args.message);
+              const duration = Date.now() - startTime;
+              this.logger.log(`[Tool:send_feishu_message] <<< OUTPUT (${duration}ms): Message sent successfully`);
               return {
                 content: [{ type: 'text' as const, text: 'Message sent successfully.' }],
               };
             } catch (e: any) {
+              const duration = Date.now() - startTime;
+              this.logger.error(`[Tool:send_feishu_message] <<< ERROR (${duration}ms): ${e.message}`);
               return {
                 content: [{ type: 'text' as const, text: `Error sending message: ${e.message}` }],
               };
@@ -99,12 +125,13 @@ export class AgentService implements OnModuleInit {
     // 发送开始事件
     subject.next({ data: JSON.stringify({ type: 'started', executionId, prompt: userPrompt }) });
 
+    const currentTime = this.getBeijingTime();
     async function* generateMessages(): AsyncGenerator<SDKUserMessage> {
       yield {
         type: 'user',
         message: {
           role: 'user',
-          content: userPrompt,
+          content: `[当前时间: ${currentTime}]\n\n${userPrompt}`,
         },
       } as SDKUserMessage;
     }
@@ -126,13 +153,36 @@ export class AgentService implements OnModuleInit {
       })) {
         // 推送消息到客户端
         subject.next({ data: JSON.stringify(message) });
-        this.logger.log(`[${executionId}] ${message.type}`);
 
-        // 如果是结果消息，完成流
-        if (message.type === 'result') {
-          this.logger.log(`[${executionId}] Agent completed`);
+        // 详细的消息类型日志
+        if (message.type === 'assistant') {
+          const assistantMsg = message as any;
+          if (assistantMsg.message?.content) {
+            for (const block of assistantMsg.message.content) {
+              if (block.type === 'text') {
+                const textPreview = block.text.length > 200 ? block.text.substring(0, 200) + '...' : block.text;
+                this.logger.log(`[${executionId}] [Assistant] Text: ${textPreview}`);
+              } else if (block.type === 'tool_use') {
+                this.logger.log(`[${executionId}] [Assistant] Tool Call: ${block.name}`);
+                this.logger.log(`[${executionId}] [Assistant] Tool Input: ${JSON.stringify(block.input)}`);
+              }
+            }
+          }
+        } else if (message.type === 'tool_progress') {
+          const toolProgressMsg = message as any;
+          this.logger.log(`[${executionId}] [Tool Progress] ${JSON.stringify(toolProgressMsg)}`);
+        } else if (message.type === 'result') {
+          const resultMsg = message as any;
+          if (resultMsg.subtype === 'success') {
+            const resultPreview = resultMsg.result?.length > 300 ? resultMsg.result.substring(0, 300) + '...' : resultMsg.result;
+            this.logger.log(`[${executionId}] [Result] Success: ${resultPreview}`);
+          } else {
+            this.logger.warn(`[${executionId}] [Result] ${resultMsg.subtype}: ${JSON.stringify(resultMsg.errors || [])}`);
+          }
           subject.complete();
           break;
+        } else {
+          this.logger.log(`[${executionId}] [${message.type}]`);
         }
       }
     } catch (error: any) {
@@ -153,12 +203,13 @@ export class AgentService implements OnModuleInit {
   async runAgent(userPrompt: string): Promise<string> {
     this.logger.log(`Starting agent with prompt: ${userPrompt}`);
 
+    const currentTime = this.getBeijingTime();
     async function* generateMessages(): AsyncGenerator<SDKUserMessage> {
       yield {
         type: 'user',
         message: {
           role: 'user',
-          content: userPrompt,
+          content: `[当前时间: ${currentTime}]\n\n${userPrompt}`,
         },
       } as SDKUserMessage;
     }

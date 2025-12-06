@@ -218,6 +218,173 @@ const API_ENDPOINTS: ApiEndpoint[] = [
     requiresAuth: true,
     hasBody: false,
   },
+  {
+    id: 'feishu-test-card',
+    name: 'Test Card',
+    method: 'POST',
+    path: '/api/feishu/test-card',
+    description: 'Send a test card message to verify Feishu card functionality',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: false,
+  },
+  {
+    id: 'feishu-send-rich-text',
+    name: 'Send Rich Text',
+    method: 'POST',
+    path: '/api/feishu/send-rich-text',
+    description: 'Send a rich text (post) message with multiple language support',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        post: {
+          zh_cn: {
+            title: '富文本消息标题',
+            content: [
+              [
+                { tag: 'text', text: '这是一段普通文本，' },
+                { tag: 'a', text: '点击查看链接', href: 'https://example.com' },
+              ],
+              [
+                { tag: 'text', text: '第二行文本，' },
+                { tag: 'at', user_id: 'all', user_name: '所有人' },
+              ],
+            ],
+          },
+        },
+      },
+      null,
+      2
+    ),
+  },
+  {
+    id: 'feishu-send-rich-text-simple',
+    name: 'Send Rich Text (Simple)',
+    method: 'POST',
+    path: '/api/feishu/send-rich-text-simple',
+    description: 'Send a simplified rich text message (Chinese only)',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        title: '简化富文本消息',
+        content: [
+          [
+            { tag: 'text', text: '任务执行完成！' },
+          ],
+          [
+            { tag: 'text', text: '详情请查看：' },
+            { tag: 'a', text: '任务报告', href: 'https://example.com/report' },
+          ],
+        ],
+      },
+      null,
+      2
+    ),
+  },
+  {
+    id: 'feishu-send-card',
+    name: 'Send Card',
+    method: 'POST',
+    path: '/api/feishu/send-card',
+    description: 'Send an interactive card message with full customization',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        card: {
+          header: {
+            title: { tag: 'plain_text', content: '消息卡片标题' },
+            template: 'blue',
+          },
+          elements: [
+            {
+              tag: 'div',
+              text: {
+                tag: 'lark_md',
+                content: '**任务状态**: 已完成\n**执行时间**: 2024-01-01 12:00:00',
+              },
+            },
+            { tag: 'hr' },
+            {
+              tag: 'action',
+              actions: [
+                {
+                  tag: 'button',
+                  text: { tag: 'lark_md', content: '查看详情' },
+                  url: 'https://example.com',
+                  type: 'primary',
+                },
+              ],
+            },
+          ],
+        },
+      },
+      null,
+      2
+    ),
+  },
+  {
+    id: 'feishu-send-simple-card',
+    name: 'Send Simple Card',
+    method: 'POST',
+    path: '/api/feishu/send-simple-card',
+    description: 'Send a simplified card message with Markdown support',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        title: '任务执行通知',
+        content: '**执行结果**: 成功 ✅\n\n**任务名称**: 数据同步\n**执行时间**: 2024-01-01 12:00:00\n\n任务已成功完成，所有数据已同步。',
+        headerColor: 'green',
+        buttons: [
+          { text: '查看报告', url: 'https://example.com/report', type: 'primary' },
+          { text: '历史记录', url: 'https://example.com/history', type: 'default' },
+        ],
+      },
+      null,
+      2
+    ),
+  },
+  {
+    id: 'feishu-send-image',
+    name: 'Send Image',
+    method: 'POST',
+    path: '/api/feishu/send-image',
+    description: 'Send an image message (requires image_key from uploaded image)',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        image_key: 'img_v2_xxx',
+      },
+      null,
+      2
+    ),
+  },
+  {
+    id: 'feishu-send-share-chat',
+    name: 'Send Share Chat',
+    method: 'POST',
+    path: '/api/feishu/send-share-chat',
+    description: 'Send a group chat card message',
+    category: 'Feishu',
+    requiresAuth: true,
+    hasBody: true,
+    bodyTemplate: JSON.stringify(
+      {
+        share_chat_id: 'oc_xxx',
+      },
+      null,
+      2
+    ),
+  },
   // Search endpoints
   {
     id: 'search-status',
