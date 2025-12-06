@@ -4,6 +4,10 @@ import serverlessExpress from '@codegenie/serverless-express';
 import { AppModule } from '../src/app.module';
 import type { Handler, Context, Callback } from 'aws-lambda';
 
+// 强制打包器包含此 ESM 包（此导入从不执行）
+// @ts-ignore - Bundler hint for dynamic import
+export const _dependencies = () => import('@anthropic-ai/claude-agent-sdk');
+
 let cachedServer: Handler;
 
 async function bootstrap(): Promise<Handler> {
