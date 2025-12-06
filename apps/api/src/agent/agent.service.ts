@@ -71,7 +71,7 @@ export class AgentService implements OnModuleInit {
         ),
         tool(
           'send_feishu_message',
-          'Send a message or summary to Feishu (Lark).',
+          'Send a plain text message to Feishu (Lark). For rich formatted content with titles and buttons, use send_feishu_card instead.',
           { message: z.string().describe('The message content to send') },
           async (args) => {
             const startTime = Date.now();
@@ -89,6 +89,48 @@ export class AgentService implements OnModuleInit {
               this.logger.error(`[Tool:send_feishu_message] <<< ERROR (${duration}ms): ${e.message}`);
               return {
                 content: [{ type: 'text' as const, text: `Error sending message: ${e.message}` }],
+              };
+            }
+          }
+        ),
+        tool(
+          'send_feishu_card',
+          'Send a rich interactive card to Feishu (Lark). Cards support Markdown formatting, colored headers, and action buttons. Use this for well-formatted summaries, reports, or notifications.',
+          {
+            title: z.string().describe('Card header title'),
+            content: z.string().describe('Card body content in Markdown format. Supports: **bold**, *italic*, [links](url), bullet lists (- item), numbered lists (1. item), and more.'),
+            color: z.enum(['blue', 'wathet', 'turquoise', 'green', 'yellow', 'orange', 'red', 'carmine', 'violet', 'purple', 'indigo', 'grey'])
+              .optional()
+              .describe('Header background color theme. Default is blue.'),
+            buttons: z.array(z.object({
+              text: z.string().describe('Button label text'),
+              url: z.string().describe('URL to open when button is clicked'),
+              type: z.enum(['default', 'primary', 'danger']).optional().describe('Button style. Default is "default".'),
+            })).optional().describe('Optional action buttons at the bottom of the card'),
+          },
+          async (args) => {
+            const startTime = Date.now();
+            this.logger.log(`[Tool:send_feishu_card] >>> INPUT: ${JSON.stringify({
+              title: args.title,
+              content: args.content.length > 100 ? args.content.substring(0, 100) + '...' : args.content,
+              color: args.color,
+              buttons: args.buttons,
+            })}`);
+            try {
+              await this.feishuService.sendSimpleCard(args.title, args.content, {
+                headerColor: args.color,
+                buttons: args.buttons,
+              });
+              const duration = Date.now() - startTime;
+              this.logger.log(`[Tool:send_feishu_card] <<< OUTPUT (${duration}ms): Card sent successfully`);
+              return {
+                content: [{ type: 'text' as const, text: 'Card sent successfully.' }],
+              };
+            } catch (e: any) {
+              const duration = Date.now() - startTime;
+              this.logger.error(`[Tool:send_feishu_card] <<< ERROR (${duration}ms): ${e.message}`);
+              return {
+                content: [{ type: 'text' as const, text: `Error sending card: ${e.message}` }],
               };
             }
           }
@@ -144,6 +186,7 @@ export class AgentService implements OnModuleInit {
           allowedTools: [
             'mcp__improbix-tools__search_internet',
             'mcp__improbix-tools__send_feishu_message',
+            'mcp__improbix-tools__send_feishu_card',
           ],
           maxTurns: 10,
           model: 'claude-sonnet-4-20250514',
