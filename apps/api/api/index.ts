@@ -23,13 +23,13 @@ async function bootstrap(): Promise<Handler> {
   return serverlessExpress({ app: expressApp });
 }
 
-export const handler: Handler = async (
+export default async function handler(
   event: any,
   context: Context,
   callback: Callback,
-) => {
+) {
   if (!cachedServer) {
     cachedServer = await bootstrap();
   }
   return cachedServer(event, context, callback);
-};
+}
