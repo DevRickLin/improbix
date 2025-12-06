@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "module": "ESNext",
+    "module": "commonjs",
     "target": "ES2021",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "outDir": "./dist",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -14,5 +14,5 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*", "api/**/*"]
+  "include": ["src/**/*"]
 }

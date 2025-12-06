@@ -1,20 +1,39 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { query, tool, createSdkMcpServer, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { Subject, Observable } from 'rxjs';
 import { SearchService } from '../search/search.service';
 import { FeishuService } from '../feishu/feishu.service';
 
+// 类型导入（不影响运行时）
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+
 interface MessageEvent {
   data: string;
+}
+
+// 动态加载 ESM 模块的 SDK
+interface ClaudeSdk {
+  query: typeof import('@anthropic-ai/claude-agent-sdk').query;
+  tool: typeof import('@anthropic-ai/claude-agent-sdk').tool;
+  createSdkMcpServer: typeof import('@anthropic-ai/claude-agent-sdk').createSdkMcpServer;
+}
+
+async function loadClaudeSdk(): Promise<ClaudeSdk> {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  return {
+    query: sdk.query,
+    tool: sdk.tool,
+    createSdkMcpServer: sdk.createSdkMcpServer,
+  };
 }
 
 @Injectable()
 export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
-  private customServer!: ReturnType<typeof createSdkMcpServer>;
+  private customServer!: any;
   private streams = new Map<string, Subject<MessageEvent>>();
+  private sdk!: ClaudeSdk;
 
   constructor(
     private configService: ConfigService,
@@ -35,13 +54,16 @@ export class AgentService implements OnModuleInit {
     });
   }
 
-  onModuleInit() {
+  async onModuleInit() {
+    // 动态加载 SDK
+    this.sdk = await loadClaudeSdk();
+
     // 创建包含自定义工具的 MCP server
-    this.customServer = createSdkMcpServer({
+    this.customServer = this.sdk.createSdkMcpServer({
       name: 'improbix-tools',
       version: '1.0.0',
       tools: [
-        tool(
+        this.sdk.tool(
           'search_internet',
           'Search the internet for latest news and information. Use this to find information on Hacker News, Reddit, or other sources.',
           { query: z.string().describe('The search query') },
@@ -69,7 +91,7 @@ export class AgentService implements OnModuleInit {
             }
           }
         ),
-        tool(
+        this.sdk.tool(
           'send_feishu_message',
           'Send a plain text message to Feishu (Lark). For rich formatted content with titles and buttons, use send_feishu_card instead.',
           { message: z.string().describe('The message content to send') },
@@ -93,7 +115,7 @@ export class AgentService implements OnModuleInit {
             }
           }
         ),
-        tool(
+        this.sdk.tool(
           'send_feishu_card',
           'Send a rich interactive card to Feishu (Lark). Cards support Markdown formatting, colored headers, and action buttons. Use this for well-formatted summaries, reports, or notifications.',
           {
@@ -179,7 +201,7 @@ export class AgentService implements OnModuleInit {
     }
 
     try {
-      for await (const message of query({
+      for await (const message of this.sdk.query({
         prompt: generateMessages(),
         options: {
           mcpServers: { 'improbix-tools': this.customServer },
@@ -257,7 +279,7 @@ export class AgentService implements OnModuleInit {
       } as SDKUserMessage;
     }
 
-    for await (const message of query({
+    for await (const message of this.sdk.query({
       prompt: generateMessages(),
       options: {
         mcpServers: { 'improbix-tools': this.customServer },

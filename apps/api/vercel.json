@@ -1,19 +1,4 @@
 {
-  "version": 2,
-  "buildCommand": "cd ../.. && pnpm turbo build --filter=@improbix/api",
-  "installCommand": "cd ../.. && pnpm install",
-  "outputDirectory": ".",
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api"
-    }
-  ],
-  "functions": {
-    "api/index.ts": {
-      "maxDuration": 60
-    }
-  },
   "crons": [
     {
       "path": "/api/tasks/cron/tick",
