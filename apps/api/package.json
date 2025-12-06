@@ -2,10 +2,11 @@
   "name": "@improbix/api",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "start": "dotenv -e ../../.env -- ts-node src/main.ts",
-    "dev": "dotenv -e ../../.env -- nodemon --exec ts-node src/main.ts",
+    "start": "dotenv -e ../../.env -- node --import @swc-node/register/esm-register src/main.ts",
+    "dev": "dotenv -e ../../.env -- nodemon --exec 'node --import @swc-node/register/esm-register' src/main.ts",
     "build": "tsc",
     "vercel-build": "tsc",
     "clean": "rm -rf dist",
@@ -14,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.60",
     "@anthropic-ai/sdk": "^0.71.2",
+    "@libsql/client": "^0.15.15",
     "@mendable/firecrawl-js": "^1.29.3",
     "@nestjs/common": "^11.1.9",
     "@nestjs/config": "^4.0.2",
@@ -29,6 +31,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "cron": "^4.3.5",
+    "cron-parser": "^5.4.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "https-proxy-agent": "^7.0.6",
@@ -42,12 +45,14 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@swc-node/register": "^1.11.1",
+    "@swc/cli": "^0.7.9",
+    "@swc/core": "^1.15.3",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/passport-jwt": "^4.0.1",
     "@types/passport-local": "^1.0.38",
     "nodemon": "^3.1.11",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }

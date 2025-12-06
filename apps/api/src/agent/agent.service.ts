@@ -2,13 +2,19 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { query, tool, createSdkMcpServer, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { Subject, Observable } from 'rxjs';
 import { SearchService } from '../search/search.service';
 import { FeishuService } from '../feishu/feishu.service';
+
+interface MessageEvent {
+  data: string;
+}
 
 @Injectable()
 export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
   private customServer!: ReturnType<typeof createSdkMcpServer>;
+  private streams = new Map<string, Subject<MessageEvent>>();
 
   constructor(
     private configService: ConfigService,
@@ -65,10 +71,34 @@ export class AgentService implements OnModuleInit {
     });
   }
 
-  async runAgent(userPrompt: string): Promise<string> {
-    this.logger.log(`Starting agent with prompt: ${userPrompt}`);
+  /**
+   * 获取执行事件流（用于 SSE）
+   */
+  getEventStream(executionId: string): Observable<MessageEvent> {
+    const subject = this.streams.get(executionId);
+    if (!subject) {
+      // 如果流不存在，返回一个立即完成的 Observable
+      return new Observable((subscriber) => {
+        subscriber.next({ data: JSON.stringify({ type: 'error', message: 'Execution not found' }) });
+        subscriber.complete();
+      });
+    }
+    return subject.asObservable();
+  }
 
-    // Streaming input 模式需要使用 async generator
+  /**
+   * 流式执行 Agent（用于 SSE 推送）
+   */
+  async runAgentStream(executionId: string, userPrompt: string): Promise<void> {
+    this.logger.log(`[${executionId}] Starting agent stream with prompt: ${userPrompt}`);
+
+    // 创建 Subject 用于推送事件
+    const subject = new Subject<MessageEvent>();
+    this.streams.set(executionId, subject);
+
+    // 发送开始事件
+    subject.next({ data: JSON.stringify({ type: 'started', executionId, prompt: userPrompt }) });
+
     async function* generateMessages(): AsyncGenerator<SDKUserMessage> {
       yield {
         type: 'user',
@@ -79,7 +109,60 @@ export class AgentService implements OnModuleInit {
       } as SDKUserMessage;
     }
 
-    // 使用 query() 函数，SDK 内部处理 agentic loop
+    try {
+      for await (const message of query({
+        prompt: generateMessages(),
+        options: {
+          mcpServers: { 'improbix-tools': this.customServer },
+          allowedTools: [
+            'mcp__improbix-tools__search_internet',
+            'mcp__improbix-tools__send_feishu_message',
+          ],
+          maxTurns: 10,
+          model: 'claude-sonnet-4-20250514',
+          permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
+        },
+      })) {
+        // 推送消息到客户端
+        subject.next({ data: JSON.stringify(message) });
+        this.logger.log(`[${executionId}] ${message.type}`);
+
+        // 如果是结果消息，完成流
+        if (message.type === 'result') {
+          this.logger.log(`[${executionId}] Agent completed`);
+          subject.complete();
+          break;
+        }
+      }
+    } catch (error: any) {
+      this.logger.error(`[${executionId}] Agent error: ${error.message}`);
+      subject.next({ data: JSON.stringify({ type: 'error', message: error.message }) });
+      subject.complete();
+    } finally {
+      // 清理
+      setTimeout(() => {
+        this.streams.delete(executionId);
+      }, 5000);
+    }
+  }
+
+  /**
+   * 同步执行 Agent（用于定时任务等场景）
+   */
+  async runAgent(userPrompt: string): Promise<string> {
+    this.logger.log(`Starting agent with prompt: ${userPrompt}`);
+
+    async function* generateMessages(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: userPrompt,
+        },
+      } as SDKUserMessage;
+    }
+
     for await (const message of query({
       prompt: generateMessages(),
       options: {
@@ -94,16 +177,27 @@ export class AgentService implements OnModuleInit {
         allowDangerouslySkipPermissions: true,
       },
     })) {
-      // 处理不同类型的消息
+      this.logger.log(`[${message.type}] ${JSON.stringify(message, null, 2)}`);
+
       if (message.type === 'assistant') {
-        this.logger.debug('Received assistant message');
+        const assistantMsg = message as any;
+        if (assistantMsg.message?.content) {
+          for (const block of assistantMsg.message.content) {
+            if (block.type === 'text') {
+              this.logger.log(`[Assistant Text] ${block.text}`);
+            } else if (block.type === 'tool_use') {
+              this.logger.log(`[Tool Call] ${block.name}: ${JSON.stringify(block.input)}`);
+            }
+          }
+        }
       } else if (message.type === 'result') {
         if (message.subtype === 'success') {
-          this.logger.log('Agent finished task successfully.');
+          this.logger.log(`[Result Success] ${message.result}`);
           return message.result;
         } else {
-          this.logger.warn(`Agent finished with error: ${message.subtype}`);
+          this.logger.warn(`[Result Error] subtype: ${message.subtype}`);
           if ('errors' in message) {
+            this.logger.error(`[Errors] ${JSON.stringify((message as any).errors)}`);
             return `Error: ${(message as any).errors.join(', ')}`;
           }
           return 'Agent execution failed';

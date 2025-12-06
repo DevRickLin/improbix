@@ -44,8 +44,9 @@ export class FeishuService {
 
   async sendMessage(params: FeishuMessageParams): Promise<any> {
     if (!this.webhookUrl) {
-      this.logger.error('Feishu Webhook URL is not configured.');
-      return; 
+      const errorMsg = 'Feishu Webhook URL is not configured. Please set FEISHU_WEBHOOK_URL environment variable.';
+      this.logger.error(errorMsg);
+      throw new Error(errorMsg);
     }
 
     const timestamp = Math.floor(Date.now() / 1000);
@@ -66,7 +67,9 @@ export class FeishuService {
       this.logger.log('Message sent to Feishu successfully');
       return response.data;
     } catch (error: any) {
-      this.logger.error(`Error sending message to Feishu: ${error.message}`);
+      const errorMsg = `Error sending message to Feishu: ${error.message}`;
+      this.logger.error(errorMsg);
+      throw new Error(errorMsg);
     }
   }
 

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { FeishuModule } from './feishu/feishu.module';
@@ -8,24 +8,45 @@ import { AgentModule } from './agent/agent.module';
 import { TasksModule } from './tasks/tasks.module';
 import { AuthModule } from './auth/auth.module';
 import { Task } from './database/task.entity';
+import { TaskExecution } from './database/task-execution.entity';
 
-// Use /tmp for Vercel serverless (ephemeral storage)
-// For production, consider using a cloud database like Turso, PlanetScale, or Neon
 const isVercel = process.env.VERCEL === '1';
-const databasePath = isVercel ? '/tmp/sqlite.db' : 'sqlite.db';
 
 @Module({
   imports: [
-    // Environment variables are loaded by dotenv-cli in package.json scripts
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    TypeOrmModule.forRoot({
-      type: 'sqlite',
-      database: databasePath,
-      entities: [Task],
-      synchronize: true,
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        const tursoUrl = configService.get<string>('TURSO_DATABASE_URL');
+        const tursoToken = configService.get<string>('TURSO_AUTH_TOKEN');
+
+        // Use Turso in Vercel production environment
+        if (isVercel && tursoUrl) {
+          return {
+            type: 'sqlite',
+            database: tursoUrl,
+            extra: {
+              authToken: tursoToken,
+            },
+            entities: [Task, TaskExecution],
+            synchronize: true, // For development; use migrations in production
+          };
+        }
+
+        // Local development uses SQLite file
+        return {
+          type: 'sqlite',
+          database: 'sqlite.db',
+          entities: [Task, TaskExecution],
+          synchronize: true,
+        };
+      },
+      inject: [ConfigService],
     }),
+    // ScheduleModule is still needed for local development
     ScheduleModule.forRoot(),
     AuthModule,
     FeishuModule,

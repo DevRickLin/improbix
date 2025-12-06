@@ -1,20 +1,26 @@
-import { Button } from "@/components/ui/button";
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuthStore } from '@/stores/auth-store';
 
 export default function Home() {
+  const router = useRouter();
+  const { isAuthenticated, isHydrated } = useAuthStore();
+
+  useEffect(() => {
+    if (isHydrated) {
+      if (isAuthenticated) {
+        router.replace('/dashboard');
+      } else {
+        router.replace('/login');
+      }
+    }
+  }, [isAuthenticated, isHydrated, router]);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-24">
-      <div className="text-center space-y-6">
-        <h1 className="text-4xl font-bold tracking-tight">
-          Welcome to Improbix
-        </h1>
-        <p className="text-lg text-muted-foreground max-w-md">
-          AI Agent Task Management Dashboard - Automate your workflows with Claude AI
-        </p>
-        <div className="flex gap-4 justify-center">
-          <Button>Get Started</Button>
-          <Button variant="outline">Learn More</Button>
-        </div>
-      </div>
-    </main>
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
   );
 }

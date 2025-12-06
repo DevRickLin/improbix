@@ -5,15 +5,24 @@ export class Task {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column()
+  @Column({ type: 'varchar' })
   name!: string;
 
-  @Column()
+  @Column({ type: 'varchar' })
   cronSchedule!: string;
 
-  @Column('text')
+  @Column({ type: 'text' })
   prompt!: string;
 
-  @Column({ default: true })
+  @Column({ type: 'boolean', default: true })
   isActive!: boolean;
+
+  @Column({ type: 'datetime', nullable: true })
+  lastRunAt!: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  nextRunAt!: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  timezone!: string | null;
 }

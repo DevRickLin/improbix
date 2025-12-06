@@ -15,7 +15,8 @@
         "FEISHU_SECRET",
         "ADMIN_USERNAME",
         "ADMIN_PASSWORD",
-        "NEXT_PUBLIC_API_URL"
+        "NEXT_PUBLIC_API_URL",
+        "OPENAI_API_KEY"
       ]
     },
     "dev": {
