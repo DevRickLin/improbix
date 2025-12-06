@@ -20,7 +20,10 @@ interface ClaudeSdk {
 }
 
 async function loadClaudeSdk(): Promise<ClaudeSdk> {
-  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  // 使用 Function 构造器绕过 TypeScript 将 import() 编译为 require() 的行为
+  // 这确保在 CommonJS 环境中能够正确加载 ESM 模块
+  const dynamicImport = new Function('specifier', 'return import(specifier)');
+  const sdk = await dynamicImport('@anthropic-ai/claude-agent-sdk');
   return {
     query: sdk.query,
     tool: sdk.tool,
