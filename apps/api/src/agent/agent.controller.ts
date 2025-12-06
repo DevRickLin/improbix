@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, Sse, UseGuards } from '@nestjs/common';
+import { Controller, Inject, Post, Get, Body, Param, Sse, UseGuards } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AgentService } from './agent.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -9,7 +9,7 @@ interface MessageEvent {
 
 @Controller('agent')
 export class AgentController {
-  constructor(private readonly agentService: AgentService) {}
+  constructor(@Inject(AgentService) private readonly agentService: AgentService) {}
 
   /**
    * 启动 Agent 执行（立即返回 executionId）

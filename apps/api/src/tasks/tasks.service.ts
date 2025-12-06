@@ -1,12 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, IsNull, Or } from 'typeorm';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { CronExpressionParser } from 'cron-parser';
-import { Task } from '../database/task.entity';
-import { TaskExecution } from '../database/task-execution.entity';
+import { DatabaseService, Task, TaskExecution } from '../database/database.service';
 import { AgentService } from '../agent/agent.service';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class TasksService implements OnModuleInit {
@@ -14,12 +12,9 @@ export class TasksService implements OnModuleInit {
   private readonly isVercel = process.env.VERCEL === '1';
 
   constructor(
-    @InjectRepository(Task)
-    private tasksRepository: Repository<Task>,
-    @InjectRepository(TaskExecution)
-    private executionsRepository: Repository<TaskExecution>,
-    private schedulerRegistry: SchedulerRegistry,
-    private agentService: AgentService,
+    @Inject(DatabaseService) private db: DatabaseService,
+    @Inject(SchedulerRegistry) private schedulerRegistry: SchedulerRegistry,
+    @Inject(AgentService) private agentService: AgentService,
   ) {}
 
   async onModuleInit() {
@@ -35,17 +30,12 @@ export class TasksService implements OnModuleInit {
    * Initialize nextRunAt for existing tasks that don't have it set
    */
   private async initializeNextRunTimes() {
-    const tasksWithoutNextRun = await this.tasksRepository.find({
-      where: {
-        isActive: true,
-        nextRunAt: IsNull(),
-      },
-    });
+    const tasksWithoutNextRun = await this.db.findTasksWithNullNextRun();
 
     for (const task of tasksWithoutNextRun) {
       try {
         const nextRun = this.calculateNextRunTime(task.cronSchedule, task.timezone);
-        await this.tasksRepository.update(task.id, { nextRunAt: nextRun });
+        await this.db.updateTask(task.id, { nextRunAt: nextRun });
         this.logger.log(`Initialized nextRunAt for task ${task.id}: ${nextRun}`);
       } catch (e) {
         this.logger.warn(`Failed to initialize nextRunAt for task ${task.id}`, e);
@@ -57,7 +47,7 @@ export class TasksService implements OnModuleInit {
    * Local development: use in-memory cron scheduling
    */
   private async loadLocalScheduler() {
-    const tasks = await this.tasksRepository.find({ where: { isActive: true } });
+    const tasks = await this.db.findAllTasks({ isActive: true });
     tasks.forEach((task) => this.scheduleLocalTask(task));
     this.logger.log(`[Local] Loaded ${tasks.length} tasks.`);
   }
@@ -73,7 +63,7 @@ export class TasksService implements OnModuleInit {
       this.logger.log(`[Local] Executing task: ${task.name}`);
       try {
         await this.agentService.runAgent(task.prompt);
-        await this.tasksRepository.update(task.id, { lastRunAt: new Date() });
+        await this.db.updateTask(task.id, { lastRunAt: new Date() });
       } catch (e) {
         this.logger.error(`[Local] Task ${task.name} failed`, e);
       }
@@ -95,11 +85,9 @@ export class TasksService implements OnModuleInit {
     this.logger.log(`Processing cron tick at ${now.toISOString()}`);
 
     // Find tasks where nextRunAt <= now and isActive = true
-    const dueTasks = await this.tasksRepository.find({
-      where: {
-        isActive: true,
-        nextRunAt: LessThanOrEqual(now),
-      },
+    const dueTasks = await this.db.findAllTasks({
+      isActive: true,
+      nextRunAtLessThan: now,
     });
 
     this.logger.log(`Found ${dueTasks.length} due tasks`);
@@ -156,7 +144,7 @@ export class TasksService implements OnModuleInit {
   private async updateNextRunTime(task: Task): Promise<void> {
     try {
       const nextRun = this.calculateNextRunTime(task.cronSchedule, task.timezone);
-      await this.tasksRepository.update(task.id, {
+      await this.db.updateTask(task.id, {
         nextRunAt: nextRun,
         lastRunAt: new Date(),
       });
@@ -170,14 +158,13 @@ export class TasksService implements OnModuleInit {
    * Create execution record
    */
   private async startExecution(task: Task): Promise<TaskExecution> {
-    const execution = this.executionsRepository.create({
+    return this.db.createExecution({
+      id: randomUUID(),
       taskId: task.id,
       taskName: task.name,
       prompt: task.prompt,
-      status: 'running',
       startedAt: new Date(),
     });
-    return this.executionsRepository.save(execution);
   }
 
   /**
@@ -188,7 +175,7 @@ export class TasksService implements OnModuleInit {
       this.logger.log(`Executing task: ${task.name}`);
       const result = await this.agentService.runAgent(task.prompt);
 
-      await this.executionsRepository.update(executionId, {
+      await this.db.updateExecution(executionId, {
         status: 'success',
         result: typeof result === 'string' ? result : JSON.stringify(result),
         completedAt: new Date(),
@@ -196,7 +183,7 @@ export class TasksService implements OnModuleInit {
       this.logger.log(`Task ${task.name} completed successfully`);
     } catch (error: any) {
       this.logger.error(`Task ${task.name} failed`, error);
-      await this.executionsRepository.update(executionId, {
+      await this.db.updateExecution(executionId, {
         status: 'error',
         result: error.message,
         completedAt: new Date(),
@@ -223,15 +210,13 @@ export class TasksService implements OnModuleInit {
     // Calculate first run time
     const nextRunAt = this.calculateNextRunTime(cronSchedule, timezone);
 
-    const task = this.tasksRepository.create({
+    const savedTask = await this.db.createTask({
       name,
       cronSchedule,
       prompt,
       timezone: timezone || null,
       nextRunAt,
     });
-
-    const savedTask = await this.tasksRepository.save(task);
 
     // For local development, also schedule in-memory
     if (!this.isVercel) {
@@ -245,7 +230,10 @@ export class TasksService implements OnModuleInit {
    * Manually trigger task execution
    */
   async runTaskManually(taskId: number): Promise<TaskExecution> {
-    const task = await this.tasksRepository.findOneOrFail({ where: { id: taskId } });
+    const task = await this.db.findTaskById(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
     const execution = await this.startExecution(task);
 
     // Execute asynchronously
@@ -262,30 +250,21 @@ export class TasksService implements OnModuleInit {
     limit = 20,
     offset = 0,
   ): Promise<{ data: TaskExecution[]; total: number }> {
-    const where = taskId ? { taskId } : {};
-    const [data, total] = await this.executionsRepository.findAndCount({
-      where,
-      order: { startedAt: 'DESC' },
-      take: limit,
-      skip: offset,
-    });
-    return { data, total };
+    return this.db.findExecutions({ taskId, limit, offset });
   }
 
   /**
    * List all tasks
    */
   async listTasks(): Promise<Task[]> {
-    return this.tasksRepository.find({
-      order: { id: 'DESC' },
-    });
+    return this.db.findAllTasks();
   }
 
   /**
    * Delete a task
    */
   async deleteTask(id: number): Promise<void> {
-    await this.tasksRepository.delete(id);
+    await this.db.deleteTask(id);
 
     // For local development, also remove from scheduler
     if (!this.isVercel) {
@@ -303,7 +282,7 @@ export class TasksService implements OnModuleInit {
     id: number,
     data: Partial<Pick<Task, 'name' | 'cronSchedule' | 'prompt' | 'isActive' | 'timezone'>>,
   ): Promise<Task | null> {
-    const updateData: any = { ...data };
+    const updateData: Partial<Task> = { ...data };
 
     // Recalculate nextRunAt if cronSchedule changed
     if (data.cronSchedule) {
@@ -318,11 +297,11 @@ export class TasksService implements OnModuleInit {
       }
     }
 
-    await this.tasksRepository.update(id, updateData);
+    await this.db.updateTask(id, updateData);
 
     // For local development, reschedule if needed
     if (!this.isVercel && (data.cronSchedule || data.isActive !== undefined)) {
-      const task = await this.tasksRepository.findOne({ where: { id } });
+      const task = await this.db.findTaskById(id);
       if (task) {
         const jobName = `task-${id}`;
         if (this.schedulerRegistry.doesExist('cron', jobName)) {
@@ -334,6 +313,6 @@ export class TasksService implements OnModuleInit {
       }
     }
 
-    return this.tasksRepository.findOne({ where: { id } });
+    return this.db.findTaskById(id);
   }
 }

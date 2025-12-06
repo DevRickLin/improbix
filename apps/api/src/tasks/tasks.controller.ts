@@ -1,5 +1,6 @@
 import {
   Controller,
+  Inject,
   Post,
   Get,
   Delete,
@@ -16,7 +17,7 @@ import { CronGuard } from './cron.guard';
 
 @Controller('tasks')
 export class TasksController {
-  constructor(private readonly tasksService: TasksService) {}
+  constructor(@Inject(TasksService) private readonly tasksService: TasksService) {}
 
   // ========== Cron Endpoint (Special Auth) ==========
 

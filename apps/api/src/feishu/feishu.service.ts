@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import * as crypto from 'crypto';
@@ -131,7 +131,7 @@ export class FeishuService {
   private readonly secret: string;
   private readonly axiosClient: AxiosInstance;
 
-  constructor(private configService: ConfigService) {
+  constructor(@Inject(ConfigService) private configService: ConfigService) {
     this.webhookUrl = this.configService.get<string>('FEISHU_WEBHOOK_URL', '');
     this.secret = this.configService.get<string>('FEISHU_SECRET', '');
 

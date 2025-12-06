@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import { Subject, Observable } from 'rxjs';
@@ -36,9 +36,9 @@ export class AgentService implements OnModuleInit {
   private sdk!: ClaudeSdk;
 
   constructor(
-    private configService: ConfigService,
-    private searchService: SearchService,
-    private feishuService: FeishuService,
+    @Inject(ConfigService) private configService: ConfigService,
+    @Inject(SearchService) private searchService: SearchService,
+    @Inject(FeishuService) private feishuService: FeishuService,
   ) {}
 
   private getBeijingTime(): string {

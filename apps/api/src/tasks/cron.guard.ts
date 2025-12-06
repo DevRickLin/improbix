@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   CanActivate,
   ExecutionContext,
@@ -8,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class CronGuard implements CanActivate {
-  constructor(private configService: ConfigService) {}
+  constructor(@Inject(ConfigService) private configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();

@@ -1,5 +1,6 @@
 import {
   Controller,
+  Inject,
   Post,
   Get,
   Body,
@@ -27,7 +28,7 @@ class CrawlUrlDto {
 @Controller('search')
 @UseGuards(JwtAuthGuard)
 export class SearchController {
-  constructor(private readonly searchService: SearchService) {}
+  constructor(@Inject(SearchService) private readonly searchService: SearchService) {}
 
   @Get('status')
   async getStatus() {

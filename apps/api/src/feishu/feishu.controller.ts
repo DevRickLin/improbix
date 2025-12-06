@@ -1,5 +1,6 @@
 import {
   Controller,
+  Inject,
   Post,
   Body,
   Get,
@@ -59,7 +60,7 @@ class SendShareChatDto {
 @Controller('feishu')
 @UseGuards(JwtAuthGuard)
 export class FeishuController {
-  constructor(private readonly feishuService: FeishuService) {}
+  constructor(@Inject(FeishuService) private readonly feishuService: FeishuService) {}
 
   @Get('status')
   async getStatus() {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import FirecrawlApp from '@mendable/firecrawl-js';
 import Bottleneck from 'bottleneck';
@@ -9,7 +9,7 @@ export class SearchService implements OnModuleInit {
   private firecrawl: FirecrawlApp | null = null;
   private limiter: Bottleneck;
 
-  constructor(private configService: ConfigService) {
+  constructor(@Inject(ConfigService) private configService: ConfigService) {
     const apiKey = this.configService.get<string>('FIRECRAWL_API_KEY');
     if (apiKey) {
       this.firecrawl = new FirecrawlApp({ apiKey });
