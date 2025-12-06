@@ -1,0 +1,53 @@
+{
+  "name": "@improbix/api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "dotenv -e ../../.env -- ts-node src/main.ts",
+    "dev": "dotenv -e ../../.env -- nodemon --exec ts-node src/main.ts",
+    "build": "tsc",
+    "vercel-build": "tsc",
+    "clean": "rm -rf dist",
+    "lint": "echo 'No lint configured'"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.60",
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@mendable/firecrawl-js": "^1.29.3",
+    "@nestjs/common": "^11.1.9",
+    "@nestjs/config": "^4.0.2",
+    "@nestjs/core": "^11.1.9",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/passport": "^11.0.5",
+    "@nestjs/platform-express": "^11.1.9",
+    "@nestjs/schedule": "^6.0.1",
+    "@nestjs/typeorm": "^11.0.0",
+    "@types/cron": "^2.0.1",
+    "axios": "^1.13.2",
+    "bottleneck": "^2.19.5",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.3",
+    "cron": "^4.3.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "https-proxy-agent": "^7.0.6",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "passport-local": "^1.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sqlite3": "^5.1.7",
+    "typeorm": "^0.3.28",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.1",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/passport-local": "^1.0.38",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local", "**/.env"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": [
+        "NODE_ENV",
+        "ANTHROPIC_API_KEY",
+        "FIRECRAWL_API_KEY",
+        "JWT_SECRET",
+        "JWT_EXPIRES_IN",
+        "FEISHU_WEBHOOK_URL",
+        "FEISHU_SECRET",
+        "ADMIN_USERNAME",
+        "ADMIN_PASSWORD",
+        "NEXT_PUBLIC_API_URL"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}
