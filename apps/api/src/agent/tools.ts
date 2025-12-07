@@ -39,23 +39,10 @@ export function createAgentTools(
     }),
     execute: async ({ url }) => {
       const result = await searchService.scrapeUrl(url);
-      if (result && typeof result === 'object' && 'error' in result) {
-        return `Error scraping URL: ${(result as any).error}`;
+      if (!result.success) {
+        return `Error scraping URL: ${result.error}`;
       }
-      return (result as any).markdown || JSON.stringify(result);
-    },
-  });
-
-  const crawlWebsite = tool({
-    description:
-      'Crawl a website and extract content from multiple pages. Use this for deep website analysis or gathering content from multiple related pages.',
-    inputSchema: z.object({
-      url: z.string().url().describe('The starting URL to crawl'),
-      limit: z.number().optional().describe('Maximum number of pages to crawl (default: 10)'),
-    }),
-    execute: async ({ url, limit }) => {
-      const result = await searchService.crawlUrl(url, { limit: limit || 10 });
-      return JSON.stringify(result);
+      return result.markdown || JSON.stringify(result);
     },
   });
 
@@ -68,7 +55,10 @@ export function createAgentTools(
     }),
     execute: async ({ url, limit }) => {
       const result = await searchService.mapUrl(url, { limit });
-      return JSON.stringify(result);
+      if (!result.success) {
+        return `Error mapping URL: ${result.error}`;
+      }
+      return result.links?.join('\n') || 'No links found';
     },
   });
 
@@ -242,7 +232,6 @@ export function createAgentTools(
   return {
     search_internet: searchInternet,
     scrape_url: scrapeUrl,
-    crawl_website: crawlWebsite,
     map_website: mapWebsite,
     extract_data: extractData,
     send_report: sendReport,
