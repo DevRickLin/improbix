@@ -4,10 +4,6 @@ import { AppModule } from '../src/app.module';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
-// 强制打包器包含此 ESM 包（此导入从不执行）
-// @ts-ignore - Bundler hint for dynamic import
-export const _dependencies = () => import('@anthropic-ai/claude-agent-sdk');
-
 let app: NestExpressApplication | null = null;
 
 async function bootstrap(): Promise<NestExpressApplication> {

@@ -2,15 +2,7 @@
   "builds": [
     {
       "src": "api/index.ts",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "node_modules/@anthropic-ai/**",
-          "node_modules/.pnpm/@anthropic-ai+*/**",
-          "../../node_modules/@anthropic-ai/**",
-          "../../node_modules/.pnpm/@anthropic-ai+*/**"
-        ]
-      }
+      "use": "@vercel/node"
     }
   ],
   "routes": [

@@ -1,20 +1,20 @@
 import { apiClient } from './client';
 
 export interface RunAgentResponse {
-  executionId: string;
-  status: 'started';
-  message: string;
+  status: 'completed';
+  result: string;
 }
 
 export const agentApi = {
   /**
-   * 启动 Agent 执行（立即返回 executionId）
+   * Chat 端点 - 用于 useChat hook
+   * 注意：useChat 会直接调用这个端点，不需要手动调用
+   */
+  chatEndpoint: '/api/agent/chat',
+
+  /**
+   * 同步执行 Agent（用于定时任务触发等场景）
    */
   run: (task: string) =>
     apiClient.post<RunAgentResponse>('/agent/run', { task }),
-
-  /**
-   * 获取 SSE 流 URL
-   */
-  getStreamUrl: (executionId: string) => `/api/agent/stream/${executionId}`,
 };

@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "ES2022",
     "target": "ES2021",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "outDir": "./dist",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

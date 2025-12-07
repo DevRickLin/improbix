@@ -12,7 +12,7 @@
     "lint": "echo 'No lint configured'"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.60",
+    "@ai-sdk/anthropic": "^2.0.53",
     "@anthropic-ai/sdk": "^0.71.2",
     "@codegenie/serverless-express": "^4.17.0",
     "@libsql/client": "^0.15.15",
@@ -24,6 +24,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/schedule": "^6.0.1",
     "@types/cron": "^2.0.1",
+    "ai": "^5.0.108",
     "axios": "^1.13.2",
     "bottleneck": "^2.19.5",
     "class-transformer": "^0.5.1",
