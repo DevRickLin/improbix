@@ -9,7 +9,6 @@ import {
   Param,
   Query,
   UseGuards,
-  HttpCode,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -21,9 +20,8 @@ export class TasksController {
 
   // ========== Cron Endpoint (Special Auth) ==========
 
-  @Post('cron/tick')
+  @Get('cron/tick')
   @UseGuards(CronGuard)
-  @HttpCode(200)
   async cronTick() {
     return this.tasksService.processCronTick();
   }
