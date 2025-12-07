@@ -1,19 +1,26 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { streamText, generateText, stepCountIs, type CoreMessage } from 'ai';
+import {
+  createGateway,
+  streamText,
+  generateText,
+  stepCountIs,
+  type CoreMessage,
+} from 'ai';
 import { ProxyAgent } from 'undici';
 import { SearchService } from '../search/search.service';
 import { FeishuService } from '../feishu/feishu.service';
 import { createAgentTools, type AgentTools } from './tools';
 
-/** Anthropic provider 类型 */
-type AnthropicProvider = ReturnType<typeof createAnthropic>;
+type GatewayProvider = ReturnType<typeof createGateway>;
+
+const DEFAULT_MODEL = 'anthropic/claude-sonnet-4-20250514';
 
 @Injectable()
 export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
-  private anthropic: AnthropicProvider | null = null;
+  private gateway: GatewayProvider | null = null;
+  private modelId: string = DEFAULT_MODEL;
   private tools: AgentTools | null = null;
 
   constructor(
@@ -23,25 +30,21 @@ export class AgentService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
+    const apiKey = this.configService.get<string>('AI_GATEWAY_API_KEY');
     if (!apiKey) {
-      this.logger.warn(
-        'ANTHROPIC_API_KEY not found, agent will not be initialized',
-      );
-      return;
+      throw new Error('AI_GATEWAY_API_KEY is required');
     }
 
-    // 创建 Anthropic provider，支持代理配置
     const proxyUrl = this.getProxyUrl();
-    this.anthropic = createAnthropic({
+    this.gateway = createGateway({
       apiKey,
       ...(proxyUrl ? { fetch: this.createProxyFetch(proxyUrl) } : {}),
     });
 
-    // 创建工具集
+    this.modelId = this.configService.get<string>('AI_MODEL') || DEFAULT_MODEL;
     this.tools = createAgentTools(this.searchService, this.feishuService);
 
-    this.logger.log('Agent initialized with Vercel AI SDK');
+    this.logger.log(`Agent initialized with model: ${this.modelId}`);
   }
 
   private getBeijingTime(): string {
@@ -59,22 +62,19 @@ export class AgentService implements OnModuleInit {
 
   /**
    * 流式执行 Agent
-   * 返回 streamText 结果，可直接用于 pipeUIMessageStreamToResponse
    */
   streamChat(messages: CoreMessage[]) {
-    if (!this.anthropic || !this.tools) {
+    if (!this.gateway || !this.tools) {
       throw new Error('Agent not initialized');
     }
 
     const currentTime = this.getBeijingTime();
     const systemPrompt = `You are a helpful AI assistant. Current time (Beijing): ${currentTime}`;
 
-    this.logger.log(
-      `Starting agent stream with ${messages.length} messages...`,
-    );
+    this.logger.log(`Starting agent stream with ${messages.length} messages...`);
 
     return streamText({
-      model: this.anthropic('claude-sonnet-4-20250514'),
+      model: this.gateway(this.modelId),
       system: systemPrompt,
       messages,
       tools: this.tools,
@@ -107,7 +107,7 @@ export class AgentService implements OnModuleInit {
    * 同步执行 Agent（用于定时任务等场景）
    */
   async runAgent(userPrompt: string): Promise<string> {
-    if (!this.anthropic || !this.tools) {
+    if (!this.gateway || !this.tools) {
       throw new Error('Agent not initialized');
     }
 
@@ -117,7 +117,7 @@ export class AgentService implements OnModuleInit {
     );
 
     const result = await generateText({
-      model: this.anthropic('claude-sonnet-4-20250514'),
+      model: this.gateway(this.modelId),
       system: `You are a helpful AI assistant. Current time (Beijing): ${currentTime}`,
       messages: [{ role: 'user', content: userPrompt }],
       tools: this.tools,
@@ -141,7 +141,7 @@ export class AgentService implements OnModuleInit {
 
   private createProxyFetch(proxyUrl: string): typeof fetch {
     const proxyAgent = new ProxyAgent(proxyUrl);
-    this.logger.log(`Using proxy for Anthropic traffic: ${proxyUrl}`);
+    this.logger.log(`Using proxy for AI traffic: ${proxyUrl}`);
 
     return (input: RequestInfo | URL, init?: RequestInit) => {
       return fetch(input, {

@@ -7,7 +7,8 @@
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
       "env": [
         "NODE_ENV",
-        "ANTHROPIC_API_KEY",
+        "AI_GATEWAY_API_KEY",
+        "AI_MODEL",
         "FIRECRAWL_API_KEY",
         "JWT_SECRET",
         "JWT_EXPIRES_IN",
@@ -15,8 +16,7 @@
         "FEISHU_SECRET",
         "ADMIN_USERNAME",
         "ADMIN_PASSWORD",
-        "NEXT_PUBLIC_API_URL",
-        "OPENAI_API_KEY"
+        "NEXT_PUBLIC_API_URL"
       ]
     },
     "dev": {
