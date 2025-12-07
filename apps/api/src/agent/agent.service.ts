@@ -89,6 +89,7 @@ export class AgentService implements OnModuleInit {
       system: systemPrompt,
       messages,
       tools,
+      stopWhen: stepCountIs(100),
       onStepFinish: (event) => {
         this.logger.log(`Step finished: ${event.finishReason}`);
         if (event.toolCalls && event.toolCalls.length > 0) {
@@ -134,6 +135,7 @@ export class AgentService implements OnModuleInit {
     const result = await generateText({
       model: this.gateway(this.modelId),
       system: systemPrompt,
+      stopWhen: stepCountIs(100),
       messages: [{ role: 'user', content: userPrompt }],
       tools,
     });

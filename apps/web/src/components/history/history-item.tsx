@@ -54,7 +54,7 @@ export function HistoryItem({ execution }: HistoryItemProps) {
         {execution.result && (
           <div>
             <p className="text-xs text-muted-foreground mb-1">Result</p>
-            <p className="text-sm line-clamp-3 font-mono bg-muted p-2 rounded">
+            <p className="text-sm line-clamp-3 font-mono bg-muted p-2 rounded break-all">
               {execution.result}
             </p>
           </div>

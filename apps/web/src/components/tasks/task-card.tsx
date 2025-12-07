@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Play, Trash2, Clock } from 'lucide-react';
+import { Play, Trash2, Clock, Edit } from 'lucide-react';
 import cronstrue from 'cronstrue';
 
 import {
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TaskDeleteDialog } from './task-delete-dialog';
 import { TaskRunDialog } from './task-run-dialog';
+import { TaskDialog } from './task-dialog';
 import type { Task } from '@/types/task';
 
 interface TaskCardProps {
@@ -57,6 +58,12 @@ export function TaskCard({ task }: TaskCardProps) {
             Run
           </Button>
         </TaskRunDialog>
+        <TaskDialog task={task} mode="edit">
+          <Button variant="outline" size="sm">
+            <Edit className="h-4 w-4 mr-1" />
+            Edit
+          </Button>
+        </TaskDialog>
         <TaskDeleteDialog taskId={task.id} taskName={task.name}>
           <Button variant="outline" size="sm">
             <Trash2 className="h-4 w-4 mr-1" />

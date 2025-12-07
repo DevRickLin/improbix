@@ -291,7 +291,7 @@ export function TopicDialog({ children, topic, mode = 'create' }: TopicDialogPro
                 )}
 
                 {/* Sources list */}
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[200px] overflow-y-auto">
                   {sources.map((source, index) => (
                     editingSourceIndex === index ? (
                       <TopicSourceForm

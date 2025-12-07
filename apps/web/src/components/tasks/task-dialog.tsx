@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -21,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SchedulePicker } from '@/components/ui/schedule-picker';
 import { TopicSelector } from '@/components/topics/topic-selector';
 import { useTasks } from '@/lib/hooks/use-tasks';
+import type { Task } from '@/types/task';
 
 const taskSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -33,12 +34,15 @@ type TaskFormData = z.infer<typeof taskSchema>;
 
 interface TaskDialogProps {
   children: React.ReactNode;
+  task?: Task;
+  mode?: 'create' | 'edit';
 }
 
-export function TaskDialog({ children }: TaskDialogProps) {
+export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { createTask } = useTasks();
+  const { createTask, updateTask } = useTasks();
+  const isEditMode = mode === 'edit' && task;
 
   const {
     register,
@@ -56,12 +60,40 @@ export function TaskDialog({ children }: TaskDialogProps) {
     },
   });
 
+  // Initialize form when dialog opens in edit mode
+  useEffect(() => {
+    if (open) {
+      if (task) {
+        reset({
+          name: task.name,
+          cron: task.cronSchedule,
+          prompt: task.prompt,
+          topicIds: task.topics?.map((t) => t.id) || [],
+        });
+      } else {
+        reset({
+          name: '',
+          cron: '0 9 * * *',
+          prompt: '',
+          topicIds: [],
+        });
+      }
+    }
+  }, [open, task, reset]);
+
   const onSubmit = async (data: TaskFormData) => {
     try {
       setIsLoading(true);
-      await createTask(data);
+      if (isEditMode) {
+        await updateTask(task.id, {
+          name: data.name,
+          cronSchedule: data.cron,
+          prompt: data.prompt,
+        });
+      } else {
+        await createTask(data);
+      }
       setOpen(false);
-      reset();
     } catch {
       // Error is handled by useTasks hook
     } finally {
@@ -74,9 +106,11 @@ export function TaskDialog({ children }: TaskDialogProps) {
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Create New Task</DialogTitle>
+          <DialogTitle>{isEditMode ? 'Edit Task' : 'Create New Task'}</DialogTitle>
           <DialogDescription>
-            Set up a new scheduled AI task. The task will run automatically based on the schedule.
+            {isEditMode
+              ? 'Update the task settings and schedule.'
+              : 'Set up a new scheduled AI task. The task will run automatically based on the schedule.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)}>
@@ -149,7 +183,9 @@ export function TaskDialog({ children }: TaskDialogProps) {
               Cancel
             </Button>
             <Button type="submit" disabled={isLoading}>
-              {isLoading ? 'Creating...' : 'Create Task'}
+              {isLoading
+                ? (isEditMode ? 'Saving...' : 'Creating...')
+                : (isEditMode ? 'Save Changes' : 'Create Task')}
             </Button>
           </DialogFooter>
         </form>
