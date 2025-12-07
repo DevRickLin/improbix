@@ -1,5 +1,5 @@
 import { Controller, Inject, Post, Body, Res, UseGuards, Logger } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import type { CoreMessage } from 'ai';
 import { AgentService } from './agent.service';
 import { DatabaseService, TopicWithSources } from '../database/database.service';

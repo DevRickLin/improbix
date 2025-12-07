@@ -12,8 +12,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import {
-  TopicsService,
+import { TopicsService } from './topics.service';
+import type {
   CreateTopicDto,
   UpdateTopicDto,
   CreateTopicSourceDto,

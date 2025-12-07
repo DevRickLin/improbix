@@ -2,14 +2,13 @@
   "name": "@improbix/api",
   "version": "1.0.0",
   "private": true,
-  "main": "dist/main.js",
   "scripts": {
-    "start": "dotenv -e ../../.env -- tsx src/main.ts",
-    "dev": "dotenv -e ../../.env -- tsx watch src/main.ts",
-    "build": "tsc",
-    "vercel-build": "tsc",
-    "clean": "rm -rf dist",
-    "lint": "echo 'No lint configured'"
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main"
   },
   "dependencies": {
     "@codegenie/serverless-express": "^4.17.0",
@@ -41,9 +40,7 @@
   },
   "devDependencies": {
     "@nestjs/platform-express": "^11.1.9",
-    "@swc-node/register": "^1.11.1",
-    "@swc/cli": "^0.7.9",
-    "@swc/core": "^1.15.3",
+    "@nestjs/cli": "^11.0.0",
     "@types/aws-lambda": "^8.10.159",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
@@ -52,6 +49,7 @@
     "@vercel/node": "^5.5.15",
     "nodemon": "^3.1.11",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ts-node": "^10.9.2"
   }
 }
