@@ -19,12 +19,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SchedulePicker } from '@/components/ui/schedule-picker';
+import { TopicSelector } from '@/components/topics/topic-selector';
 import { useTasks } from '@/lib/hooks/use-tasks';
 
 const taskSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   cron: z.string().min(1, 'Schedule is required'),
   prompt: z.string().min(1, 'Prompt is required'),
+  topicIds: z.array(z.number()),
 });
 
 type TaskFormData = z.infer<typeof taskSchema>;
@@ -50,6 +52,7 @@ export function TaskDialog({ children }: TaskDialogProps) {
       name: '',
       cron: '0 9 * * *',
       prompt: '',
+      topicIds: [],
     },
   });
 
@@ -121,6 +124,24 @@ export function TaskDialog({ children }: TaskDialogProps) {
               {errors.prompt && (
                 <p className="text-sm text-destructive">{errors.prompt.message}</p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Topics (Optional)</Label>
+              <Controller
+                name="topicIds"
+                control={control}
+                render={({ field }) => (
+                  <TopicSelector
+                    value={field.value}
+                    onChange={field.onChange}
+                    disabled={isLoading}
+                  />
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                Select topics to provide context and information sources to the AI.
+              </p>
             </div>
           </div>
           <DialogFooter>

@@ -26,4 +26,10 @@ export const searchApi = {
 
   crawlUrl: (url: string, limit?: number) =>
     apiClient.post<SearchResponse>('/search/crawl', { url, limit }),
+
+  mapUrl: (url: string, limit?: number) =>
+    apiClient.post<SearchResponse>('/search/map', { url, limit }),
+
+  extractData: (url: string, prompt: string) =>
+    apiClient.post<SearchResponse>('/search/extract', { url, prompt }),
 };

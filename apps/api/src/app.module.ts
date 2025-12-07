@@ -7,6 +7,8 @@ import { SearchModule } from './search/search.module';
 import { AgentModule } from './agent/agent.module';
 import { TasksModule } from './tasks/tasks.module';
 import { AuthModule } from './auth/auth.module';
+import { TopicsModule } from './topics/topics.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { AuthModule } from './auth/auth.module';
     SearchModule,
     AgentModule,
     TasksModule,
+    TopicsModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

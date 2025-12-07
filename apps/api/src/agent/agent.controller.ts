@@ -1,7 +1,8 @@
-import { Controller, Inject, Post, Body, Res, UseGuards } from '@nestjs/common';
+import { Controller, Inject, Post, Body, Res, UseGuards, Logger } from '@nestjs/common';
 import { Response } from 'express';
 import type { CoreMessage } from 'ai';
 import { AgentService } from './agent.service';
+import { DatabaseService, TopicWithSources } from '../database/database.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 interface ChatRequestBody {
@@ -11,12 +12,16 @@ interface ChatRequestBody {
     parts?: Array<{ type: string; text?: string }>;
   }>;
   prompt?: string;
+  taskId?: number;  // 可选：传入任务ID以获取关联的主题
 }
 
 @Controller('agent')
 export class AgentController {
+  private readonly logger = new Logger(AgentController.name);
+
   constructor(
     @Inject(AgentService) private readonly agentService: AgentService,
+    @Inject(DatabaseService) private readonly db: DatabaseService,
   ) {}
 
   /**
@@ -32,7 +37,17 @@ export class AgentController {
     }
 
     try {
-      const result = this.agentService.streamChat(messages);
+      // 如果提供了 taskId，获取任务关联的主题
+      let topicsContext: TopicWithSources[] | undefined;
+      if (body.taskId) {
+        this.logger.log(`Chat request with taskId: ${body.taskId}`);
+        topicsContext = await this.db.findTaskTopics(body.taskId);
+        this.logger.log(`Loaded ${topicsContext.length} topics for task ${body.taskId}`);
+      } else {
+        this.logger.log('Chat request without taskId');
+      }
+
+      const result = this.agentService.streamChat(messages, { topicsContext });
 
       // 使用 pipeUIMessageStreamToResponse 的第二个参数传入自定义 headers
       // https://ai-sdk.dev/docs/reference/ai-sdk-ui/pipe-ui-message-stream-to-response

@@ -25,6 +25,16 @@ class CrawlUrlDto {
   limit?: number;
 }
 
+class MapUrlDto {
+  url!: string;
+  limit?: number;
+}
+
+class ExtractDataDto {
+  url!: string;
+  prompt!: string;
+}
+
 @Controller('search')
 @UseGuards(JwtAuthGuard)
 export class SearchController {
@@ -120,6 +130,55 @@ export class SearchController {
     } catch (error: any) {
       throw new HttpException(
         error.message || 'Crawl failed',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('map')
+  async mapUrl(@Body() dto: MapUrlDto) {
+    if (!dto.url) {
+      throw new HttpException('URL is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const result = await this.searchService.mapUrl(dto.url, {
+        limit: dto.limit,
+      });
+      return {
+        success: true,
+        url: dto.url,
+        data: result,
+      };
+    } catch (error: any) {
+      throw new HttpException(
+        error.message || 'Map failed',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('extract')
+  async extractData(@Body() dto: ExtractDataDto) {
+    if (!dto.url) {
+      throw new HttpException('URL is required', HttpStatus.BAD_REQUEST);
+    }
+    if (!dto.prompt) {
+      throw new HttpException('Prompt is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const result = await this.searchService.extractData(dto.url, {
+        prompt: dto.prompt,
+      });
+      return {
+        success: true,
+        url: dto.url,
+        data: result,
+      };
+    } catch (error: any) {
+      throw new HttpException(
+        error.message || 'Extract failed',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

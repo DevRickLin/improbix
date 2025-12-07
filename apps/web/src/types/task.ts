@@ -1,3 +1,5 @@
+import type { Topic } from './topic';
+
 export interface Task {
   id: number;
   name: string;
@@ -7,6 +9,8 @@ export interface Task {
   timezone?: string | null;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
+  topicIds?: number[];
+  topics?: Topic[];
 }
 
 export interface CreateTaskDto {
@@ -14,6 +18,7 @@ export interface CreateTaskDto {
   cron: string;
   prompt: string;
   timezone?: string;
+  topicIds?: number[];
 }
 
 export interface UpdateTaskDto {

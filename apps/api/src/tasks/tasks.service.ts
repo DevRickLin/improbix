@@ -2,8 +2,9 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { CronExpressionParser } from 'cron-parser';
-import { DatabaseService, Task, TaskExecution } from '../database/database.service';
+import { DatabaseService, Task, TaskExecution, TopicWithSources } from '../database/database.service';
 import { AgentService } from '../agent/agent.service';
+import { ReportsService } from '../reports/reports.service';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class TasksService implements OnModuleInit {
     @Inject(DatabaseService) private db: DatabaseService,
     @Inject(SchedulerRegistry) private schedulerRegistry: SchedulerRegistry,
     @Inject(AgentService) private agentService: AgentService,
+    @Inject(ReportsService) private reportsService: ReportsService,
   ) {}
 
   async onModuleInit() {
@@ -62,7 +64,9 @@ export class TasksService implements OnModuleInit {
     const job = new CronJob(task.cronSchedule, async () => {
       this.logger.log(`[Local] Executing task: ${task.name}`);
       try {
-        await this.agentService.runAgent(task.prompt);
+        // Use the same execution flow as Vercel Cron
+        const execution = await this.startExecution(task);
+        await this.executeTaskAsync(task, execution.id);
         await this.db.updateTask(task.id, { lastRunAt: new Date() });
       } catch (e) {
         this.logger.error(`[Local] Task ${task.name} failed`, e);
@@ -80,6 +84,7 @@ export class TasksService implements OnModuleInit {
   async processCronTick(): Promise<{
     executedCount: number;
     tasks: Array<{ id: number; name: string; status: string; executionId?: string; error?: string }>;
+    cleanup?: { reportsDeleted: number; linksDeleted: number };
   }> {
     const now = new Date();
     this.logger.log(`Processing cron tick at ${now.toISOString()}`);
@@ -122,9 +127,23 @@ export class TasksService implements OnModuleInit {
       }
     }
 
+    // Cleanup old data once a day (at midnight hour)
+    let cleanup: { reportsDeleted: number; linksDeleted: number } | undefined;
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    if (hour === 0 && minute === 0) {
+      try {
+        cleanup = await this.reportsService.cleanupOldData(90); // Keep 90 days
+        this.logger.log(`Cleanup completed: ${cleanup.reportsDeleted} reports, ${cleanup.linksDeleted} links deleted`);
+      } catch (error: any) {
+        this.logger.error('Failed to cleanup old data', error);
+      }
+    }
+
     return {
       executedCount: results.filter((r) => r.status === 'started').length,
       tasks: results,
+      cleanup,
     };
   }
 
@@ -173,13 +192,25 @@ export class TasksService implements OnModuleInit {
   private async executeTaskAsync(task: Task, executionId: string): Promise<void> {
     try {
       this.logger.log(`Executing task: ${task.name}`);
-      const result = await this.agentService.runAgent(task.prompt);
+
+      // Fetch associated topics
+      const topics = await this.db.findTaskTopics(task.id);
+
+      // Run agent with topics context
+      const result = await this.agentService.runAgent(task.prompt, {
+        topicsContext: topics,
+        executionId,
+        taskId: task.id, // Pass taskId to agent context
+      });
+
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
 
       await this.db.updateExecution(executionId, {
         status: 'success',
-        result: typeof result === 'string' ? result : JSON.stringify(result),
+        result: resultStr,
         completedAt: new Date(),
       });
+
       this.logger.log(`Task ${task.name} completed successfully`);
     } catch (error: any) {
       this.logger.error(`Task ${task.name} failed`, error);
@@ -199,7 +230,8 @@ export class TasksService implements OnModuleInit {
     cronSchedule: string,
     prompt: string,
     timezone?: string,
-  ): Promise<Task> {
+    topicIds?: number[],
+  ): Promise<Task & { topicIds?: number[] }> {
     // Validate cron expression
     try {
       CronExpressionParser.parse(cronSchedule);
@@ -218,12 +250,17 @@ export class TasksService implements OnModuleInit {
       nextRunAt,
     });
 
+    // Associate topics if provided
+    if (topicIds && topicIds.length > 0) {
+      await this.db.setTaskTopics(savedTask.id, topicIds);
+    }
+
     // For local development, also schedule in-memory
     if (!this.isVercel) {
       this.scheduleLocalTask(savedTask);
     }
 
-    return savedTask;
+    return { ...savedTask, topicIds: topicIds || [] };
   }
 
   /**
@@ -314,5 +351,37 @@ export class TasksService implements OnModuleInit {
     }
 
     return this.db.findTaskById(id);
+  }
+
+  // ========== Topic Association Methods ==========
+
+  /**
+   * Get topics associated with a task
+   */
+  async getTaskTopics(taskId: number): Promise<TopicWithSources[]> {
+    return this.db.findTaskTopics(taskId);
+  }
+
+  /**
+   * Set topics for a task (replaces all existing associations)
+   */
+  async setTaskTopics(taskId: number, topicIds: number[]): Promise<{ topicIds: number[] }> {
+    await this.db.setTaskTopics(taskId, topicIds);
+    return { topicIds };
+  }
+
+  /**
+   * List all tasks with their topic IDs
+   */
+  async listTasksWithTopics(): Promise<Array<Task & { topicIds: number[] }>> {
+    const tasks = await this.db.findAllTasks();
+    const result: Array<Task & { topicIds: number[] }> = [];
+
+    for (const task of tasks) {
+      const topicIds = await this.db.findTaskTopicIds(task.id);
+      result.push({ ...task, topicIds });
+    }
+
+    return result;
   }
 }

@@ -24,6 +24,49 @@ export interface TaskExecution {
   completedAt: Date | null;
 }
 
+export interface Topic {
+  id: number;
+  name: string;
+  prompt: string;
+  autoFetchSources: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TopicSource {
+  id: number;
+  topicId: number;
+  name: string;
+  description: string | null;
+  url: string;
+  createdAt: Date;
+}
+
+export interface TopicWithSources extends Topic {
+  sources: TopicSource[];
+}
+
+export interface AIReport {
+  id: string;
+  executionId: string | null;
+  taskId: number | null;
+  title: string | null;
+  content: string;
+  summary: string | null;
+  createdAt: Date;
+}
+
+export interface AICollectedLink {
+  id: number;
+  reportId: string | null;
+  executionId: string | null;
+  url: string;
+  title: string | null;
+  description: string | null;
+  source: string | null;
+  collectedAt: Date;
+}
+
 @Injectable()
 export class DatabaseService implements OnModuleInit {
   private client!: Client;
@@ -77,6 +120,62 @@ export class DatabaseService implements OnModuleInit {
         startedAt DATETIME NOT NULL,
         completedAt DATETIME
       )`,
+      // Topic tables
+      `CREATE TABLE IF NOT EXISTS topic (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name VARCHAR(255) NOT NULL,
+        prompt TEXT NOT NULL,
+        autoFetchSources BOOLEAN DEFAULT 0,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS topic_source (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topicId INTEGER NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        url VARCHAR(1000) NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (topicId) REFERENCES topic(id) ON DELETE CASCADE
+      )`,
+      // Task-Topic association table
+      `CREATE TABLE IF NOT EXISTS task_topic (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        taskId INTEGER NOT NULL,
+        topicId INTEGER NOT NULL,
+        FOREIGN KEY (taskId) REFERENCES task(id) ON DELETE CASCADE,
+        FOREIGN KEY (topicId) REFERENCES topic(id) ON DELETE CASCADE,
+        UNIQUE(taskId, topicId)
+      )`,
+      // AI Report tables
+      `CREATE TABLE IF NOT EXISTS ai_report (
+        id VARCHAR(36) PRIMARY KEY,
+        executionId VARCHAR(36),
+        taskId INTEGER,
+        title VARCHAR(500),
+        content TEXT NOT NULL,
+        summary TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (executionId) REFERENCES task_execution(id) ON DELETE SET NULL,
+        FOREIGN KEY (taskId) REFERENCES task(id) ON DELETE SET NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS ai_collected_link (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reportId VARCHAR(36),
+        executionId VARCHAR(36),
+        url VARCHAR(2000) NOT NULL,
+        title VARCHAR(500),
+        description TEXT,
+        source VARCHAR(255),
+        collectedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (reportId) REFERENCES ai_report(id) ON DELETE CASCADE
+      )`,
+      // Indexes for better query performance
+      `CREATE INDEX IF NOT EXISTS idx_ai_report_createdAt ON ai_report(createdAt DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_ai_collected_link_collectedAt ON ai_collected_link(collectedAt DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_topic_source_topicId ON topic_source(topicId)`,
+      `CREATE INDEX IF NOT EXISTS idx_task_topic_taskId ON task_topic(taskId)`,
+      `CREATE INDEX IF NOT EXISTS idx_task_topic_topicId ON task_topic(topicId)`,
     ]);
     this.logger.log('Database tables initialized');
   }
@@ -307,6 +406,475 @@ export class DatabaseService implements OnModuleInit {
       status: row.status as 'running' | 'success' | 'error',
       startedAt: new Date(String(row.startedAt)),
       completedAt: row.completedAt ? new Date(String(row.completedAt)) : null,
+    };
+  }
+
+  // ==================== Topic Operations ====================
+
+  async createTopic(data: {
+    name: string;
+    prompt: string;
+    autoFetchSources?: boolean;
+  }): Promise<Topic> {
+    const now = new Date().toISOString();
+    const result = await this.client.execute({
+      sql: `INSERT INTO topic (name, prompt, autoFetchSources, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [data.name, data.prompt, data.autoFetchSources ? 1 : 0, now, now],
+    });
+    const id = Number(result.lastInsertRowid);
+    return (await this.findTopicById(id))!;
+  }
+
+  async findAllTopics(): Promise<Topic[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM topic ORDER BY id DESC',
+      args: [],
+    });
+    return result.rows.map((row) => this.rowToTopic(row));
+  }
+
+  async findTopicById(id: number): Promise<Topic | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM topic WHERE id = ?',
+      args: [id],
+    });
+    if (result.rows.length === 0) return null;
+    return this.rowToTopic(result.rows[0]);
+  }
+
+  async findTopicWithSources(id: number): Promise<TopicWithSources | null> {
+    const topic = await this.findTopicById(id);
+    if (!topic) return null;
+    const sources = await this.findTopicSources(id);
+    return { ...topic, sources };
+  }
+
+  async findAllTopicsWithSources(): Promise<TopicWithSources[]> {
+    const topics = await this.findAllTopics();
+    const result: TopicWithSources[] = [];
+    for (const topic of topics) {
+      const sources = await this.findTopicSources(topic.id);
+      result.push({ ...topic, sources });
+    }
+    return result;
+  }
+
+  async updateTopic(
+    id: number,
+    data: Partial<Pick<Topic, 'name' | 'prompt' | 'autoFetchSources'>>,
+  ): Promise<void> {
+    const updates: string[] = [];
+    const args: any[] = [];
+
+    if (data.name !== undefined) {
+      updates.push('name = ?');
+      args.push(data.name);
+    }
+    if (data.prompt !== undefined) {
+      updates.push('prompt = ?');
+      args.push(data.prompt);
+    }
+    if (data.autoFetchSources !== undefined) {
+      updates.push('autoFetchSources = ?');
+      args.push(data.autoFetchSources ? 1 : 0);
+    }
+
+    if (updates.length === 0) return;
+
+    updates.push('updatedAt = ?');
+    args.push(new Date().toISOString());
+    args.push(id);
+
+    await this.client.execute({
+      sql: `UPDATE topic SET ${updates.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+
+  async deleteTopic(id: number): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM topic WHERE id = ?',
+      args: [id],
+    });
+  }
+
+  private rowToTopic(row: any): Topic {
+    return {
+      id: Number(row.id),
+      name: String(row.name),
+      prompt: String(row.prompt),
+      autoFetchSources: Boolean(row.autoFetchSources),
+      createdAt: new Date(String(row.createdAt)),
+      updatedAt: new Date(String(row.updatedAt)),
+    };
+  }
+
+  // ==================== TopicSource Operations ====================
+
+  async createTopicSource(data: {
+    topicId: number;
+    name: string;
+    description?: string | null;
+    url: string;
+  }): Promise<TopicSource> {
+    const result = await this.client.execute({
+      sql: `INSERT INTO topic_source (topicId, name, description, url, createdAt)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [data.topicId, data.name, data.description || null, data.url, new Date().toISOString()],
+    });
+    const id = Number(result.lastInsertRowid);
+    return (await this.findTopicSourceById(id))!;
+  }
+
+  async findTopicSources(topicId: number): Promise<TopicSource[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM topic_source WHERE topicId = ? ORDER BY id ASC',
+      args: [topicId],
+    });
+    return result.rows.map((row) => this.rowToTopicSource(row));
+  }
+
+  async findTopicSourceById(id: number): Promise<TopicSource | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM topic_source WHERE id = ?',
+      args: [id],
+    });
+    if (result.rows.length === 0) return null;
+    return this.rowToTopicSource(result.rows[0]);
+  }
+
+  async updateTopicSource(
+    id: number,
+    data: Partial<Pick<TopicSource, 'name' | 'description' | 'url'>>,
+  ): Promise<void> {
+    const updates: string[] = [];
+    const args: any[] = [];
+
+    if (data.name !== undefined) {
+      updates.push('name = ?');
+      args.push(data.name);
+    }
+    if (data.description !== undefined) {
+      updates.push('description = ?');
+      args.push(data.description);
+    }
+    if (data.url !== undefined) {
+      updates.push('url = ?');
+      args.push(data.url);
+    }
+
+    if (updates.length === 0) return;
+
+    args.push(id);
+    await this.client.execute({
+      sql: `UPDATE topic_source SET ${updates.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+
+  async deleteTopicSource(id: number): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM topic_source WHERE id = ?',
+      args: [id],
+    });
+  }
+
+  private rowToTopicSource(row: any): TopicSource {
+    return {
+      id: Number(row.id),
+      topicId: Number(row.topicId),
+      name: String(row.name),
+      description: row.description ? String(row.description) : null,
+      url: String(row.url),
+      createdAt: new Date(String(row.createdAt)),
+    };
+  }
+
+  // ==================== Task-Topic Association Operations ====================
+
+  async setTaskTopics(taskId: number, topicIds: number[]): Promise<void> {
+    // Delete existing associations
+    await this.client.execute({
+      sql: 'DELETE FROM task_topic WHERE taskId = ?',
+      args: [taskId],
+    });
+
+    // Insert new associations
+    for (const topicId of topicIds) {
+      await this.client.execute({
+        sql: 'INSERT INTO task_topic (taskId, topicId) VALUES (?, ?)',
+        args: [taskId, topicId],
+      });
+    }
+  }
+
+  async findTaskTopicIds(taskId: number): Promise<number[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT topicId FROM task_topic WHERE taskId = ?',
+      args: [taskId],
+    });
+    return result.rows.map((row) => Number(row.topicId));
+  }
+
+  async findTaskTopics(taskId: number): Promise<TopicWithSources[]> {
+    const topicIds = await this.findTaskTopicIds(taskId);
+    const topics: TopicWithSources[] = [];
+    for (const topicId of topicIds) {
+      const topic = await this.findTopicWithSources(topicId);
+      if (topic) topics.push(topic);
+    }
+    return topics;
+  }
+
+  async addTaskTopic(taskId: number, topicId: number): Promise<void> {
+    await this.client.execute({
+      sql: 'INSERT OR IGNORE INTO task_topic (taskId, topicId) VALUES (?, ?)',
+      args: [taskId, topicId],
+    });
+  }
+
+  async removeTaskTopic(taskId: number, topicId: number): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM task_topic WHERE taskId = ? AND topicId = ?',
+      args: [taskId, topicId],
+    });
+  }
+
+  // ==================== AI Report Operations ====================
+
+  async createReport(data: {
+    id: string;
+    executionId?: string | null;
+    taskId?: number | null;
+    title?: string | null;
+    content: string;
+    summary?: string | null;
+  }): Promise<AIReport> {
+    await this.client.execute({
+      sql: `INSERT INTO ai_report (id, executionId, taskId, title, content, summary, createdAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        data.id,
+        data.executionId || null,
+        data.taskId || null,
+        data.title || null,
+        data.content,
+        data.summary || null,
+        new Date().toISOString(),
+      ],
+    });
+    return (await this.findReportById(data.id))!;
+  }
+
+  async findReportById(id: string): Promise<AIReport | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM ai_report WHERE id = ?',
+      args: [id],
+    });
+    if (result.rows.length === 0) return null;
+    return this.rowToReport(result.rows[0]);
+  }
+
+  async findReports(options: {
+    search?: string;
+    taskId?: number;
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ data: AIReport[]; total: number }> {
+    let sql = 'SELECT * FROM ai_report WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as count FROM ai_report WHERE 1=1';
+    const args: any[] = [];
+    const countArgs: any[] = [];
+
+    if (options.search) {
+      const searchPattern = `%${options.search}%`;
+      sql += ' AND (title LIKE ? OR content LIKE ? OR summary LIKE ?)';
+      countSql += ' AND (title LIKE ? OR content LIKE ? OR summary LIKE ?)';
+      args.push(searchPattern, searchPattern, searchPattern);
+      countArgs.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    if (options.taskId !== undefined) {
+      sql += ' AND taskId = ?';
+      countSql += ' AND taskId = ?';
+      args.push(options.taskId);
+      countArgs.push(options.taskId);
+    }
+
+    if (options.startDate) {
+      sql += ' AND createdAt >= ?';
+      countSql += ' AND createdAt >= ?';
+      args.push(options.startDate.toISOString());
+      countArgs.push(options.startDate.toISOString());
+    }
+
+    if (options.endDate) {
+      sql += ' AND createdAt <= ?';
+      countSql += ' AND createdAt <= ?';
+      args.push(options.endDate.toISOString());
+      countArgs.push(options.endDate.toISOString());
+    }
+
+    sql += ' ORDER BY createdAt DESC';
+    sql += ` LIMIT ${options.limit || 20} OFFSET ${options.offset || 0}`;
+
+    const [dataResult, countResult] = await Promise.all([
+      this.client.execute({ sql, args }),
+      this.client.execute({ sql: countSql, args: countArgs }),
+    ]);
+
+    return {
+      data: dataResult.rows.map((row) => this.rowToReport(row)),
+      total: Number(countResult.rows[0].count),
+    };
+  }
+
+  async deleteReport(id: string): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM ai_report WHERE id = ?',
+      args: [id],
+    });
+  }
+
+  async deleteOldReports(days: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const result = await this.client.execute({
+      sql: 'DELETE FROM ai_report WHERE createdAt < ?',
+      args: [cutoffDate.toISOString()],
+    });
+    return Number(result.rowsAffected);
+  }
+
+  private rowToReport(row: any): AIReport {
+    return {
+      id: String(row.id),
+      executionId: row.executionId ? String(row.executionId) : null,
+      taskId: row.taskId ? Number(row.taskId) : null,
+      title: row.title ? String(row.title) : null,
+      content: String(row.content),
+      summary: row.summary ? String(row.summary) : null,
+      createdAt: new Date(String(row.createdAt)),
+    };
+  }
+
+  // ==================== AI Collected Link Operations ====================
+
+  async createCollectedLink(data: {
+    reportId?: string | null;
+    executionId?: string | null;
+    url: string;
+    title?: string | null;
+    description?: string | null;
+    source?: string | null;
+  }): Promise<AICollectedLink> {
+    const result = await this.client.execute({
+      sql: `INSERT INTO ai_collected_link (reportId, executionId, url, title, description, source, collectedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        data.reportId || null,
+        data.executionId || null,
+        data.url,
+        data.title || null,
+        data.description || null,
+        data.source || null,
+        new Date().toISOString(),
+      ],
+    });
+    const id = Number(result.lastInsertRowid);
+    return (await this.findCollectedLinkById(id))!;
+  }
+
+  async findCollectedLinkById(id: number): Promise<AICollectedLink | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM ai_collected_link WHERE id = ?',
+      args: [id],
+    });
+    if (result.rows.length === 0) return null;
+    return this.rowToCollectedLink(result.rows[0]);
+  }
+
+  async findCollectedLinks(options: {
+    reportId?: string;
+    executionId?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ data: AICollectedLink[]; total: number }> {
+    let sql = 'SELECT * FROM ai_collected_link WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as count FROM ai_collected_link WHERE 1=1';
+    const args: any[] = [];
+    const countArgs: any[] = [];
+
+    if (options.reportId) {
+      sql += ' AND reportId = ?';
+      countSql += ' AND reportId = ?';
+      args.push(options.reportId);
+      countArgs.push(options.reportId);
+    }
+
+    if (options.executionId) {
+      sql += ' AND executionId = ?';
+      countSql += ' AND executionId = ?';
+      args.push(options.executionId);
+      countArgs.push(options.executionId);
+    }
+
+    if (options.search) {
+      const searchPattern = `%${options.search}%`;
+      sql += ' AND (url LIKE ? OR title LIKE ? OR description LIKE ? OR source LIKE ?)';
+      countSql += ' AND (url LIKE ? OR title LIKE ? OR description LIKE ? OR source LIKE ?)';
+      args.push(searchPattern, searchPattern, searchPattern, searchPattern);
+      countArgs.push(searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+
+    sql += ' ORDER BY collectedAt DESC';
+    sql += ` LIMIT ${options.limit || 20} OFFSET ${options.offset || 0}`;
+
+    const [dataResult, countResult] = await Promise.all([
+      this.client.execute({ sql, args }),
+      this.client.execute({ sql: countSql, args: countArgs }),
+    ]);
+
+    return {
+      data: dataResult.rows.map((row) => this.rowToCollectedLink(row)),
+      total: Number(countResult.rows[0].count),
+    };
+  }
+
+  async findLinksByReportId(reportId: string): Promise<AICollectedLink[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM ai_collected_link WHERE reportId = ? ORDER BY collectedAt DESC',
+      args: [reportId],
+    });
+    return result.rows.map((row) => this.rowToCollectedLink(row));
+  }
+
+  async deleteOldCollectedLinks(days: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const result = await this.client.execute({
+      sql: 'DELETE FROM ai_collected_link WHERE collectedAt < ?',
+      args: [cutoffDate.toISOString()],
+    });
+    return Number(result.rowsAffected);
+  }
+
+  private rowToCollectedLink(row: any): AICollectedLink {
+    return {
+      id: Number(row.id),
+      reportId: row.reportId ? String(row.reportId) : null,
+      executionId: row.executionId ? String(row.executionId) : null,
+      url: String(row.url),
+      title: row.title ? String(row.title) : null,
+      description: row.description ? String(row.description) : null,
+      source: row.source ? String(row.source) : null,
+      collectedAt: new Date(String(row.collectedAt)),
     };
   }
 }

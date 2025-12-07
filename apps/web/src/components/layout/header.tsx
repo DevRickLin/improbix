@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, History, ListTodo, Bug } from 'lucide-react';
+import { LogOut, History, ListTodo, Bug, BookOpen, FileText } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -38,6 +38,20 @@ export function Header() {
             >
               <ListTodo className="mr-1 h-4 w-4" />
               Tasks
+            </Link>
+            <Link
+              href="/dashboard/topics"
+              className="flex items-center transition-colors hover:text-foreground/80 text-foreground/60"
+            >
+              <BookOpen className="mr-1 h-4 w-4" />
+              Topics
+            </Link>
+            <Link
+              href="/dashboard/reports"
+              className="flex items-center transition-colors hover:text-foreground/80 text-foreground/60"
+            >
+              <FileText className="mr-1 h-4 w-4" />
+              Reports
             </Link>
             <Link
               href="/dashboard/history"

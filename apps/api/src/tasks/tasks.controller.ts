@@ -33,9 +33,9 @@ export class TasksController {
   @Post()
   @UseGuards(JwtAuthGuard)
   async create(
-    @Body() body: { name: string; cron: string; prompt: string; timezone?: string },
+    @Body() body: { name: string; cron: string; prompt: string; timezone?: string; topicIds?: number[] },
   ) {
-    return this.tasksService.createTask(body.name, body.cron, body.prompt, body.timezone);
+    return this.tasksService.createTask(body.name, body.cron, body.prompt, body.timezone, body.topicIds);
   }
 
   @Get()
@@ -90,5 +90,22 @@ export class TasksController {
   @UseGuards(JwtAuthGuard)
   async delete(@Param('id') id: string) {
     return this.tasksService.deleteTask(parseInt(id, 10));
+  }
+
+  // ========== Topic Association Endpoints ==========
+
+  @Get(':id/topics')
+  @UseGuards(JwtAuthGuard)
+  async getTaskTopics(@Param('id') id: string) {
+    return this.tasksService.getTaskTopics(parseInt(id, 10));
+  }
+
+  @Put(':id/topics')
+  @UseGuards(JwtAuthGuard)
+  async setTaskTopics(
+    @Param('id') id: string,
+    @Body() body: { topicIds: number[] },
+  ) {
+    return this.tasksService.setTaskTopics(parseInt(id, 10), body.topicIds);
   }
 }

@@ -112,15 +112,26 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const { token } = useAuthStore();
   const currentExecutionId = useRef<string | null>(null);
 
-  // Create transport with auth headers
+  // Create transport with auth headers and taskId
+  // 注意：使用 prepareSendMessagesRequest 而不是 body，因为 DefaultChatTransport 的 body 参数有 bug
+  // 参考：https://github.com/vercel/ai/issues/7109
   const transport = useMemo(() => {
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
 
     return new DefaultChatTransport({
       api: chatEndpoint,
       headers,
+      prepareSendMessagesRequest({ messages }) {
+        // 动态构建请求体，确保每次发送时都能获取最新的 taskId
+        return {
+          body: {
+            messages,
+            taskId: taskId ?? undefined,
+          },
+        };
+      },
     });
-  }, [token]);
+  }, [token, taskId]);
 
   const {
     messages,

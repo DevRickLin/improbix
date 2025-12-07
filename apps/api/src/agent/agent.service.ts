@@ -10,23 +10,33 @@ import {
 import { ProxyAgent } from 'undici';
 import { SearchService } from '../search/search.service';
 import { FeishuService } from '../feishu/feishu.service';
+import { ReportsService } from '../reports/reports.service';
+import { TopicWithSources } from '../database/database.service';
 import { createAgentTools, type AgentTools } from './tools';
+import { AgentPromptBuilder } from './prompts';
 
 type GatewayProvider = ReturnType<typeof createGateway>;
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4-20250514';
+
+export interface RunAgentOptions {
+  topicsContext?: TopicWithSources[];
+  executionId?: string;
+  taskId?: number;
+}
 
 @Injectable()
 export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
   private gateway: GatewayProvider | null = null;
   private modelId: string = DEFAULT_MODEL;
-  private tools: AgentTools | null = null;
+  private promptBuilder = new AgentPromptBuilder();
 
   constructor(
     @Inject(ConfigService) private configService: ConfigService,
     @Inject(SearchService) private searchService: SearchService,
     @Inject(FeishuService) private feishuService: FeishuService,
+    @Inject(ReportsService) private reportsService: ReportsService,
   ) {}
 
   async onModuleInit() {
@@ -42,42 +52,43 @@ export class AgentService implements OnModuleInit {
     });
 
     this.modelId = this.configService.get<string>('AI_MODEL') || DEFAULT_MODEL;
-    this.tools = createAgentTools(this.searchService, this.feishuService);
 
     this.logger.log(`Agent initialized with model: ${this.modelId}`);
   }
 
-  private getBeijingTime(): string {
-    return new Date().toLocaleString('zh-CN', {
-      timeZone: 'Asia/Shanghai',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
+  /**
+   * 创建带有上下文的工具集
+   */
+  private getTools(context: { executionId?: string; taskId?: number } = {}) {
+    return createAgentTools(
+      this.searchService,
+      this.feishuService,
+      this.reportsService,
+      context,
+    );
   }
 
   /**
    * 流式执行 Agent
    */
-  streamChat(messages: CoreMessage[]) {
-    if (!this.gateway || !this.tools) {
+  streamChat(messages: CoreMessage[], options?: { topicsContext?: TopicWithSources[]; executionId?: string; taskId?: number }) {
+    if (!this.gateway) {
       throw new Error('Agent not initialized');
     }
 
-    const currentTime = this.getBeijingTime();
-    const systemPrompt = `You are a helpful AI assistant. Current time (Beijing): ${currentTime}`;
+    const systemPrompt = this.promptBuilder.build(options?.topicsContext);
+    const tools = this.getTools({ 
+      executionId: options?.executionId,
+      taskId: options?.taskId 
+    });
 
-    this.logger.log(`Starting agent stream with ${messages.length} messages...`);
+    this.logger.log(`Starting agent stream with ${messages.length} messages, ${options?.topicsContext?.length || 0} topics`);
 
     return streamText({
       model: this.gateway(this.modelId),
       system: systemPrompt,
       messages,
-      tools: this.tools,
+      tools,
       stopWhen: stepCountIs(10),
       onStepFinish: (event) => {
         this.logger.log(`Step finished: ${event.finishReason}`);
@@ -106,22 +117,26 @@ export class AgentService implements OnModuleInit {
   /**
    * 同步执行 Agent（用于定时任务等场景）
    */
-  async runAgent(userPrompt: string): Promise<string> {
-    if (!this.gateway || !this.tools) {
+  async runAgent(userPrompt: string, options?: RunAgentOptions): Promise<string> {
+    if (!this.gateway) {
       throw new Error('Agent not initialized');
     }
 
-    const currentTime = this.getBeijingTime();
     this.logger.log(
-      `Starting agent with prompt: ${userPrompt.substring(0, 100)}...`,
+      `Starting agent with prompt: ${userPrompt.substring(0, 100)}..., ${options?.topicsContext?.length || 0} topics`,
     );
+
+    const systemPrompt = this.promptBuilder.build(options?.topicsContext);
+    const tools = this.getTools({ 
+      executionId: options?.executionId,
+      taskId: options?.taskId
+    });
 
     const result = await generateText({
       model: this.gateway(this.modelId),
-      system: `You are a helpful AI assistant. Current time (Beijing): ${currentTime}`,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
-      tools: this.tools,
-      stopWhen: stepCountIs(10),
+      tools,
     });
 
     this.logger.log(`Agent completed: ${result.text.substring(0, 200)}...`);

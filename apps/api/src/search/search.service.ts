@@ -86,4 +86,24 @@ export class SearchService implements OnModuleInit {
       this.firecrawl!.crawlUrl(url, { limit: options?.limit || 10 }),
     );
   }
+
+  async mapUrl(url: string, options?: { limit?: number }) {
+    if (!this.firecrawl) {
+      throw new Error('Firecrawl API not initialized');
+    }
+
+    return this.limiter.schedule(() =>
+      this.firecrawl!.mapUrl(url, { limit: options?.limit }),
+    );
+  }
+
+  async extractData(url: string, options: { prompt: string }) {
+    if (!this.firecrawl) {
+      throw new Error('Firecrawl API not initialized');
+    }
+
+    return this.limiter.schedule(() =>
+      this.firecrawl!.extract([url], { prompt: options.prompt }),
+    );
+  }
 }
