@@ -89,7 +89,6 @@ export class AgentService implements OnModuleInit {
       system: systemPrompt,
       messages,
       tools,
-      stopWhen: stepCountIs(10),
       onStepFinish: (event) => {
         this.logger.log(`Step finished: ${event.finishReason}`);
         if (event.toolCalls && event.toolCalls.length > 0) {
