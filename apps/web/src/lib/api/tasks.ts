@@ -19,6 +19,8 @@ export const tasksApi = {
 
   run: (id: number) => apiClient.post<TaskExecution>(`/tasks/${id}/run`),
 
+  resetSchedule: (id: number) => apiClient.post<Task>(`/tasks/${id}/reset-schedule`),
+
   getExecutions: (params?: { taskId?: number; limit?: number; offset?: number }) => {
     const query = new URLSearchParams();
     if (params?.taskId) query.set('taskId', String(params.taskId));

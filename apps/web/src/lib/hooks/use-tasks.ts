@@ -84,10 +84,30 @@ export function useTasks() {
     [updateTaskInStore, setLoading]
   );
 
+  const resetSchedule = useCallback(
+    async (id: number) => {
+      try {
+        setLoading(true);
+        const task = await tasksApi.resetSchedule(id);
+        updateTaskInStore(id, task);
+        toast.success('Schedule reset successfully');
+        return task;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to reset schedule';
+        toast.error(message);
+        throw error;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [updateTaskInStore, setLoading]
+  );
+
   return {
     fetchTasks,
     createTask,
     deleteTask,
     updateTask,
+    resetSchedule,
   };
 }

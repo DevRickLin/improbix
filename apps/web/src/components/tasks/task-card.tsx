@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Play, Trash2, Clock, Edit, CalendarClock } from 'lucide-react';
+import { Play, Trash2, Clock, Edit, CalendarClock, RefreshCw, Globe } from 'lucide-react';
 import cronstrue from 'cronstrue';
 
 import {
@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { TaskDeleteDialog } from './task-delete-dialog';
 import { TaskRunDialog } from './task-run-dialog';
 import { TaskDialog } from './task-dialog';
+import { useTasks } from '@/lib/hooks/use-tasks';
 import type { Task } from '@/types/task';
 
 function formatNextRunAt(dateStr: string): string {
@@ -48,12 +49,38 @@ function formatNextRunAt(dateStr: string): string {
   });
 }
 
+function formatTimezone(tz: string | null | undefined): string {
+  if (!tz) return 'UTC';
+  const tzMap: Record<string, string> = {
+    'Asia/Shanghai': 'UTC+8',
+    'Asia/Tokyo': 'UTC+9',
+    'America/New_York': 'UTC-5',
+    'America/Los_Angeles': 'UTC-8',
+    'Europe/London': 'UTC+0',
+    'UTC': 'UTC',
+  };
+  return tzMap[tz] || tz;
+}
+
 interface TaskCardProps {
   task: Task;
 }
 
 export function TaskCard({ task }: TaskCardProps) {
   const [cronDescription, setCronDescription] = useState<string>('');
+  const [isResetting, setIsResetting] = useState(false);
+  const { resetSchedule } = useTasks();
+
+  const handleResetSchedule = async () => {
+    try {
+      setIsResetting(true);
+      await resetSchedule(task.id);
+    } catch {
+      // Error handled by useTasks hook
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   try {
     const desc = cronstrue.toString(task.cronSchedule, { locale: 'en' });
@@ -78,6 +105,10 @@ export function TaskCard({ task }: TaskCardProps) {
         <div className="text-sm text-muted-foreground flex items-center gap-2">
           <Clock className="h-4 w-4" />
           <span>{cronDescription || task.cronSchedule}</span>
+          <Badge variant="outline" className="text-xs ml-auto">
+            <Globe className="h-3 w-3 mr-1" />
+            {formatTimezone(task.timezone)}
+          </Badge>
         </div>
         {task.nextRunAt && (
           <div className="text-sm text-muted-foreground flex items-center gap-2">
@@ -87,7 +118,7 @@ export function TaskCard({ task }: TaskCardProps) {
         )}
         <p className="text-sm line-clamp-3">{task.prompt}</p>
       </CardContent>
-      <CardFooter className="flex gap-2">
+      <CardFooter className="flex flex-wrap gap-2">
         <TaskRunDialog task={task}>
           <Button variant="outline" size="sm">
             <Play className="h-4 w-4 mr-1" />
@@ -100,6 +131,15 @@ export function TaskCard({ task }: TaskCardProps) {
             Edit
           </Button>
         </TaskDialog>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleResetSchedule}
+          disabled={isResetting}
+        >
+          <RefreshCw className={`h-4 w-4 mr-1 ${isResetting ? 'animate-spin' : ''}`} />
+          Reset
+        </Button>
         <TaskDeleteDialog taskId={task.id} taskName={task.name}>
           <Button variant="outline" size="sm">
             <Trash2 className="h-4 w-4 mr-1" />

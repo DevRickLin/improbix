@@ -27,6 +27,7 @@ export interface UpdateTaskDto {
   prompt?: string;
   isActive?: boolean;
   timezone?: string;
+  topicIds?: number[];
 }
 
 export interface TaskExecution {

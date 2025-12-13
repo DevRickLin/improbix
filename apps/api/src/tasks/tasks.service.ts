@@ -343,24 +343,37 @@ export class TasksService implements OnModuleInit {
    */
   async updateTask(
     id: number,
-    data: Partial<Pick<Task, 'name' | 'cronSchedule' | 'prompt' | 'isActive' | 'timezone'>>,
+    data: Partial<Pick<Task, 'name' | 'cronSchedule' | 'prompt' | 'isActive' | 'timezone'>> & { topicIds?: number[] },
   ): Promise<Task | null> {
-    const updateData: Partial<Task> = { ...data };
+    const { topicIds, ...taskData } = data;
+    const updateData: Partial<Task> = { ...taskData };
 
-    // Recalculate nextRunAt if cronSchedule changed
-    if (data.cronSchedule) {
+    // Get existing task to preserve timezone if not provided
+    const existingTask = await this.db.findTaskById(id);
+    if (!existingTask) {
+      throw new Error(`Task ${id} not found`);
+    }
+
+    // Recalculate nextRunAt if cronSchedule or timezone changed
+    if (data.cronSchedule || data.timezone !== undefined) {
+      const cronSchedule = data.cronSchedule || existingTask.cronSchedule;
+      // Use new timezone if provided, otherwise preserve existing
+      const timezone = data.timezone !== undefined ? data.timezone : existingTask.timezone;
+
       try {
-        CronExpressionParser.parse(data.cronSchedule);
-        updateData.nextRunAt = this.calculateNextRunTime(
-          data.cronSchedule,
-          data.timezone || undefined,
-        );
+        CronExpressionParser.parse(cronSchedule);
+        updateData.nextRunAt = this.calculateNextRunTime(cronSchedule, timezone);
       } catch (e) {
-        throw new Error(`Invalid cron expression: ${data.cronSchedule}`);
+        throw new Error(`Invalid cron expression: ${cronSchedule}`);
       }
     }
 
     await this.db.updateTask(id, updateData);
+
+    // Update topic associations if provided
+    if (topicIds !== undefined) {
+      await this.db.setTaskTopics(id, topicIds);
+    }
 
     // For local development, reschedule if needed
     if (!this.isVercel && (data.cronSchedule || data.isActive !== undefined)) {
@@ -377,6 +390,22 @@ export class TasksService implements OnModuleInit {
     }
 
     return this.db.findTaskById(id);
+  }
+
+  /**
+   * Reset task's nextRunAt based on current cron schedule and timezone
+   */
+  async resetTaskSchedule(taskId: number): Promise<Task> {
+    const task = await this.db.findTaskById(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const nextRun = this.calculateNextRunTime(task.cronSchedule, task.timezone);
+    await this.db.updateTask(taskId, { nextRunAt: nextRun });
+    this.logger.log(`Reset nextRunAt for task ${taskId}: ${nextRun.toISOString()}`);
+
+    return (await this.db.findTaskById(taskId))!;
   }
 
   // ========== Topic Association Methods ==========

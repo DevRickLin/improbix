@@ -79,9 +79,16 @@ export class TasksController {
       prompt?: string;
       isActive?: boolean;
       timezone?: string;
+      topicIds?: number[];
     },
   ) {
     return this.tasksService.updateTask(parseInt(id, 10), body);
+  }
+
+  @Post(':id/reset-schedule')
+  @UseGuards(JwtAuthGuard)
+  async resetSchedule(@Param('id') id: string) {
+    return this.tasksService.resetTaskSchedule(parseInt(id, 10));
   }
 
   @Delete(':id')

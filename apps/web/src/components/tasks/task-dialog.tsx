@@ -18,15 +18,41 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SchedulePicker } from '@/components/ui/schedule-picker';
 import { TopicSelector } from '@/components/topics/topic-selector';
 import { useTasks } from '@/lib/hooks/use-tasks';
 import type { Task } from '@/types/task';
 
+const TIMEZONE_OPTIONS = [
+  { value: 'Asia/Shanghai', label: '北京时间 (UTC+8)' },
+  { value: 'Asia/Tokyo', label: '东京时间 (UTC+9)' },
+  { value: 'America/New_York', label: '纽约时间 (UTC-5)' },
+  { value: 'America/Los_Angeles', label: '洛杉矶时间 (UTC-8)' },
+  { value: 'Europe/London', label: '伦敦时间 (UTC+0)' },
+  { value: 'UTC', label: 'UTC' },
+];
+
+// Get browser's default timezone
+const getBrowserTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return 'UTC';
+  }
+};
+
 const taskSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   cron: z.string().min(1, 'Schedule is required'),
   prompt: z.string().min(1, 'Prompt is required'),
+  timezone: z.string(),
   topicIds: z.array(z.number()),
 });
 
@@ -56,6 +82,7 @@ export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps)
       name: '',
       cron: '0 9 * * *',
       prompt: '',
+      timezone: getBrowserTimezone(),
       topicIds: [],
     },
   });
@@ -68,6 +95,7 @@ export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps)
           name: task.name,
           cron: task.cronSchedule,
           prompt: task.prompt,
+          timezone: task.timezone || getBrowserTimezone(),
           topicIds: task.topics?.map((t) => t.id) || [],
         });
       } else {
@@ -75,6 +103,7 @@ export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps)
           name: '',
           cron: '0 9 * * *',
           prompt: '',
+          timezone: getBrowserTimezone(),
           topicIds: [],
         });
       }
@@ -89,9 +118,17 @@ export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps)
           name: data.name,
           cronSchedule: data.cron,
           prompt: data.prompt,
+          timezone: data.timezone,
+          topicIds: data.topicIds,
         });
       } else {
-        await createTask(data);
+        await createTask({
+          name: data.name,
+          cron: data.cron,
+          prompt: data.prompt,
+          timezone: data.timezone,
+          topicIds: data.topicIds,
+        });
       }
       setOpen(false);
     } catch {
@@ -144,6 +181,35 @@ export function TaskDialog({ children, task, mode = 'create' }: TaskDialogProps)
               {errors.cron && (
                 <p className="text-sm text-destructive">{errors.cron.message}</p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Timezone</Label>
+              <Controller
+                name="timezone"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select timezone" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIMEZONE_OPTIONS.map((tz) => (
+                        <SelectItem key={tz.value} value={tz.value}>
+                          {tz.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                The schedule will be executed based on this timezone.
+              </p>
             </div>
 
             <div className="space-y-2">
