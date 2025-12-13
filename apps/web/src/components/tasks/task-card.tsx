@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Play, Trash2, Clock, Edit } from 'lucide-react';
+import { Play, Trash2, Clock, Edit, CalendarClock } from 'lucide-react';
 import cronstrue from 'cronstrue';
 
 import {
@@ -17,6 +17,36 @@ import { TaskDeleteDialog } from './task-delete-dialog';
 import { TaskRunDialog } from './task-run-dialog';
 import { TaskDialog } from './task-dialog';
 import type { Task } from '@/types/task';
+
+function formatNextRunAt(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+
+  // If in the past, show "overdue"
+  if (diffMs < 0) {
+    return 'overdue';
+  }
+
+  // If within 1 hour, show relative time
+  if (diffMs < 60 * 60 * 1000) {
+    const minutes = Math.round(diffMs / (60 * 1000));
+    return `in ${minutes} min`;
+  }
+
+  // If within 24 hours, show time only
+  if (diffMs < 24 * 60 * 60 * 1000) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Otherwise show date and time
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 interface TaskCardProps {
   task: Task;
@@ -49,6 +79,12 @@ export function TaskCard({ task }: TaskCardProps) {
           <Clock className="h-4 w-4" />
           <span>{cronDescription || task.cronSchedule}</span>
         </div>
+        {task.nextRunAt && (
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <CalendarClock className="h-4 w-4" />
+            <span>Next: {formatNextRunAt(task.nextRunAt)}</span>
+          </div>
+        )}
         <p className="text-sm line-clamp-3">{task.prompt}</p>
       </CardContent>
       <CardFooter className="flex gap-2">

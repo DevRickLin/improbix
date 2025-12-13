@@ -195,8 +195,8 @@ export class DatabaseService implements OnModuleInit {
     }
 
     if (where?.nextRunAtLessThan) {
-      sql += ' AND nextRunAt <= ?';
-      args.push(where.nextRunAtLessThan.toISOString());
+      sql += ' AND nextRunAt IS NOT NULL AND nextRunAt <= ?';
+      args.push(where.nextRunAtLessThan.getTime());
     }
 
     sql += ' ORDER BY id DESC';
@@ -209,6 +209,16 @@ export class DatabaseService implements OnModuleInit {
     const result = await this.client.execute({
       sql: 'SELECT * FROM task WHERE isActive = 1 AND nextRunAt IS NULL',
       args: [],
+    });
+    return result.rows.map((row) => this.rowToTask(row));
+  }
+
+  async findTasksNeedingNextRunUpdate(now: Date): Promise<Task[]> {
+    const result = await this.client.execute({
+      sql: `SELECT * FROM task
+            WHERE isActive = 1
+            AND (nextRunAt IS NULL OR nextRunAt <= ?)`,
+      args: [now.getTime()],
     });
     return result.rows.map((row) => this.rowToTask(row));
   }
@@ -237,7 +247,7 @@ export class DatabaseService implements OnModuleInit {
         data.cronSchedule,
         data.prompt,
         data.timezone || null,
-        data.nextRunAt?.toISOString() || null,
+        data.nextRunAt?.getTime() || null,
       ],
     });
 
@@ -274,11 +284,11 @@ export class DatabaseService implements OnModuleInit {
     }
     if (data.nextRunAt !== undefined) {
       updates.push('nextRunAt = ?');
-      args.push(data.nextRunAt?.toISOString() || null);
+      args.push(data.nextRunAt?.getTime() || null);
     }
     if (data.lastRunAt !== undefined) {
       updates.push('lastRunAt = ?');
-      args.push(data.lastRunAt?.toISOString() || null);
+      args.push(data.lastRunAt?.getTime() || null);
     }
 
     if (updates.length === 0) return;
@@ -383,6 +393,20 @@ export class DatabaseService implements OnModuleInit {
     };
   }
 
+  /**
+   * Parse date from database value (supports both ISO string and Unix timestamp)
+   */
+  private parseDate(value: any): Date | null {
+    if (!value) return null;
+    const num = Number(value);
+    // If it's a valid number and looks like a millisecond timestamp (> year 2001)
+    if (!isNaN(num) && num > 1000000000000) {
+      return new Date(num);
+    }
+    // Otherwise treat as ISO string
+    return new Date(String(value));
+  }
+
   private rowToTask(row: any): Task {
     return {
       id: Number(row.id),
@@ -390,8 +414,8 @@ export class DatabaseService implements OnModuleInit {
       cronSchedule: String(row.cronSchedule),
       prompt: String(row.prompt),
       isActive: Boolean(row.isActive),
-      lastRunAt: row.lastRunAt ? new Date(String(row.lastRunAt)) : null,
-      nextRunAt: row.nextRunAt ? new Date(String(row.nextRunAt)) : null,
+      lastRunAt: this.parseDate(row.lastRunAt),
+      nextRunAt: this.parseDate(row.nextRunAt),
       timezone: row.timezone ? String(row.timezone) : null,
     };
   }

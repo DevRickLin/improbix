@@ -29,18 +29,32 @@ export class TasksService implements OnModuleInit {
   }
 
   /**
-   * Initialize nextRunAt for existing tasks that don't have it set
+   * Initialize/update nextRunAt for tasks that need it (NULL or expired)
    */
   private async initializeNextRunTimes() {
-    const tasksWithoutNextRun = await this.db.findTasksWithNullNextRun();
+    const now = new Date();
+    const nowTs = now.getTime();
 
-    for (const task of tasksWithoutNextRun) {
+    // Get all active tasks (parseDate in rowToTask handles both ISO string and timestamp)
+    const allActiveTasks = await this.db.findAllTasks({ isActive: true });
+
+    // Filter tasks needing update (nextRunAt is null or expired)
+    const tasksNeedingUpdate = allActiveTasks.filter((task) => {
+      if (!task.nextRunAt) return true;
+      return task.nextRunAt.getTime() <= nowTs;
+    });
+
+    this.logger.log(
+      `Found ${tasksNeedingUpdate.length} tasks needing nextRunAt update (out of ${allActiveTasks.length} active)`,
+    );
+
+    for (const task of tasksNeedingUpdate) {
       try {
         const nextRun = this.calculateNextRunTime(task.cronSchedule, task.timezone);
         await this.db.updateTask(task.id, { nextRunAt: nextRun });
-        this.logger.log(`Initialized nextRunAt for task ${task.id}: ${nextRun}`);
+        this.logger.log(`Updated nextRunAt for task ${task.id}: ${nextRun.toISOString()}`);
       } catch (e) {
-        this.logger.warn(`Failed to initialize nextRunAt for task ${task.id}`, e);
+        this.logger.warn(`Failed to update nextRunAt for task ${task.id}`, e);
       }
     }
   }
@@ -87,7 +101,19 @@ export class TasksService implements OnModuleInit {
     cleanup?: { reportsDeleted: number; linksDeleted: number };
   }> {
     const now = new Date();
-    this.logger.log(`Processing cron tick at ${now.toISOString()}`);
+    const nowTs = now.getTime();
+    this.logger.log(`Processing cron tick at ${now.toISOString()} (timestamp: ${nowTs})`);
+
+    // Debug: log all active tasks for diagnosis
+    const allActive = await this.db.findAllTasks({ isActive: true });
+    this.logger.log(`[DEBUG] Total active tasks: ${allActive.length}`);
+    for (const t of allActive) {
+      const nextRunTs = t.nextRunAt?.getTime() || null;
+      const isDue = nextRunTs !== null && nextRunTs <= nowTs;
+      this.logger.log(
+        `[DEBUG] Task ${t.id} (${t.name}): nextRunAt=${t.nextRunAt?.toISOString() || 'NULL'} (ts: ${nextRunTs}), now=${nowTs}, isDue=${isDue}`,
+      );
+    }
 
     // Find tasks where nextRunAt <= now and isActive = true
     const dueTasks = await this.db.findAllTasks({
