@@ -15,6 +15,7 @@ import { EmailService } from '../email/email.service';
 import { ReportsService } from '../reports/reports.service';
 import { DatabaseService, TopicWithSources } from '../database/database.service';
 import { SandboxService } from '../sandbox/sandbox.service';
+import { SimilarWebService } from '../similarweb/similarweb.service';
 import { createAgentTools, type AgentTools } from './tools';
 import { AgentPromptBuilder } from './prompts';
 
@@ -54,6 +55,7 @@ export class AgentService implements OnModuleInit {
     @Inject(EmailService) private emailService: EmailService,
     @Inject(DatabaseService) private db: DatabaseService,
     @Inject(SandboxService) private sandboxService: SandboxService,
+    @Inject(SimilarWebService) private similarWebService: SimilarWebService,
   ) {}
 
   async onModuleInit() {
@@ -87,6 +89,7 @@ export class AgentService implements OnModuleInit {
       this.emailService,
       this.db,
       this.sandboxService,
+      this.similarWebService,
       context,
     );
   }

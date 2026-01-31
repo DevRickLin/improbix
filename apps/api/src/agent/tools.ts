@@ -6,6 +6,7 @@ import type { ReportsService } from '../reports/reports.service';
 import type { EmailService } from '../email/email.service';
 import type { DatabaseService } from '../database/database.service';
 import type { SandboxService } from '../sandbox/sandbox.service';
+import type { SimilarWebService } from '../similarweb/similarweb.service';
 import { CronExpressionParser } from 'cron-parser';
 
 export interface AgentToolsContext {
@@ -24,6 +25,7 @@ export function createAgentTools(
   emailService: EmailService,
   db: DatabaseService,
   sandboxService: SandboxService,
+  similarWebService: SimilarWebService,
   context: AgentToolsContext = {},
 ) {
   const searchInternet = tool({
@@ -518,6 +520,121 @@ export function createAgentTools(
     },
   });
 
+  // ==================== Data Platform Tools ====================
+
+  const querySimilarweb = tool({
+    description:
+      'Query SimilarWeb for website traffic analytics. Returns traffic volume, engagement metrics, traffic sources, top keywords, or competitor sites for any domain.',
+    inputSchema: z.object({
+      domain: z.string().describe('The website domain to query (e.g., "google.com", "baidu.com")'),
+      metric: z
+        .enum(['traffic', 'sources', 'keywords', 'competitors'])
+        .optional()
+        .describe('Which metric to query. "traffic" = visits & engagement, "sources" = traffic source breakdown, "keywords" = top search keywords, "competitors" = similar sites. Default: traffic'),
+      country: z.string().optional().describe('Country code filter (e.g., "us", "cn"). Default: "world" (global)'),
+    }),
+    execute: async ({ domain, metric = 'traffic', country }) => {
+      if (!similarWebService.isConfigured()) {
+        return 'SimilarWeb API is not configured. Set SIMILARWEB_API_KEY in environment.';
+      }
+      try {
+        let result: any;
+        switch (metric) {
+          case 'traffic':
+            result = await similarWebService.getWebsiteTraffic(domain, { country });
+            break;
+          case 'sources':
+            result = await similarWebService.getTrafficSources(domain, { country });
+            break;
+          case 'keywords':
+            result = await similarWebService.getTopKeywords(domain, { country });
+            break;
+          case 'competitors':
+            result = await similarWebService.getCompetitors(domain);
+            break;
+        }
+        return JSON.stringify(result);
+      } catch (error: any) {
+        return `Failed to query SimilarWeb: ${error.message}`;
+      }
+    },
+  });
+
+  const queryQuestmobile = tool({
+    description:
+      'Query QuestMobile for Chinese mobile internet data. Scrapes public pages from QuestMobile for app rankings, industry reports, and mobile usage trends. Best for Chinese market mobile app analytics.',
+    inputSchema: z.object({
+      query: z.string().describe('What to search for (e.g., "短视频 App 排行", "社交应用月活", "2024 移动互联网趋势")'),
+      type: z
+        .enum(['ranking', 'report', 'search'])
+        .optional()
+        .describe('"ranking" = app rankings page, "report" = research reports, "search" = general search on QuestMobile. Default: search'),
+    }),
+    execute: async ({ query, type = 'search' }) => {
+      try {
+        let url: string;
+        let prompt: string;
+
+        switch (type) {
+          case 'ranking':
+            url = 'https://www.questmobile.com.cn/research/report-new/172';
+            prompt = `Extract app ranking data related to: ${query}. Include app names, rankings, monthly active users (MAU), and any growth metrics.`;
+            break;
+          case 'report':
+            url = 'https://www.questmobile.com.cn/research/report-new/1';
+            prompt = `Extract research report information related to: ${query}. Include report titles, dates, key findings, and summaries.`;
+            break;
+          default:
+            // Use search_internet with site-specific query as fallback
+            const searchResult = await searchService.search(`site:questmobile.com.cn ${query}`);
+            return typeof searchResult === 'string' ? searchResult : JSON.stringify(searchResult);
+        }
+
+        const result = await searchService.extractData(url, { prompt });
+        return JSON.stringify(result);
+      } catch (error: any) {
+        return `Failed to query QuestMobile: ${error.message}`;
+      }
+    },
+  });
+
+  const queryTalkingdata = tool({
+    description:
+      'Query TalkingData for mobile app and device data in China. Scrapes public pages from TalkingData for app rankings, device market share, and mobile ecosystem insights.',
+    inputSchema: z.object({
+      query: z.string().describe('What to search for (e.g., "App排行", "设备市场份额", "移动应用活跃度")'),
+      type: z
+        .enum(['ranking', 'device', 'search'])
+        .optional()
+        .describe('"ranking" = app rankings, "device" = device/OS market share data, "search" = general search. Default: search'),
+    }),
+    execute: async ({ query, type = 'search' }) => {
+      try {
+        let url: string;
+        let prompt: string;
+
+        switch (type) {
+          case 'ranking':
+            url = 'https://mi.talkingdata.com/app-rank.html';
+            prompt = `Extract app ranking data related to: ${query}. Include app names, categories, rankings, coverage/penetration rates, and any growth data.`;
+            break;
+          case 'device':
+            url = 'https://mi.talkingdata.com/device.html';
+            prompt = `Extract device and market share data related to: ${query}. Include device brands, models, OS versions, market share percentages.`;
+            break;
+          default:
+            const searchResult = await searchService.search(`site:talkingdata.com ${query}`);
+            return typeof searchResult === 'string' ? searchResult : JSON.stringify(searchResult);
+        }
+
+        const result = await searchService.extractData(url, { prompt });
+        return JSON.stringify(result);
+      } catch (error: any) {
+        return `Failed to query TalkingData: ${error.message}`;
+      }
+    },
+  });
+
   return {
     search_internet: searchInternet,
     scrape_url: scrapeUrl,
@@ -540,6 +657,9 @@ export function createAgentTools(
     send_feishu_message: sendFeishuMessage,
     execute_code: executeCode,
     execute_shell: executeShell,
+    query_similarweb: querySimilarweb,
+    query_questmobile: queryQuestmobile,
+    query_talkingdata: queryTalkingdata,
   };
 }
 
