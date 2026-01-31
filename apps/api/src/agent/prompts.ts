@@ -93,6 +93,24 @@ export class AgentPromptBuilder {
 - **map_website**: Get all URLs from a website. Use to understand site structure before deciding which pages to scrape.
 - **extract_data**: Extract structured data using AI. Use to pull specific information like product details, contact info, or tables.
 
+### Email Tools
+- **read_emails**: Read or search emails from the connected Gmail inbox (read-only). Use Gmail search syntax (e.g., "from:user@example.com", "is:unread", "subject:report").
+
+### Task Management
+- **create_task**: Create a new scheduled task with a cron expression and prompt.
+- **list_tasks**: List all scheduled tasks and their status.
+- **update_task**: Update a task's name, schedule, prompt, active status, or associated topics.
+- **delete_task**: Delete a task by ID.
+
+### Topic Management
+- **create_topic**: Create a research topic with optional information sources.
+- **list_topics**: List all topics with their sources.
+- **update_topic**: Update a topic's name or prompt.
+- **delete_topic**: Delete a topic by ID.
+
+### Messaging
+- **send_feishu_message**: Send a text or card message to Feishu/Lark directly.
+
 ### save_collected_link
 - **WHEN**: As soon as you find a URL that contains valuable information relevant to the user's request or topic.
 - **WHY**: To build a structured knowledge base of links.

@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { DatabaseService, Task, TaskExecution, TopicWithSources } from '../database/database.service';
 import { AgentService } from '../agent/agent.service';
 import { ReportsService } from '../reports/reports.service';
+import { EmailService } from '../email/email.service';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class TasksService implements OnModuleInit {
     @Inject(SchedulerRegistry) private schedulerRegistry: SchedulerRegistry,
     @Inject(AgentService) private agentService: AgentService,
     @Inject(ReportsService) private reportsService: ReportsService,
+    @Inject(EmailService) private emailService: EmailService,
   ) {}
 
   async onModuleInit() {
@@ -131,7 +133,9 @@ export class TasksService implements OnModuleInit {
         const execution = await this.startExecution(task);
 
         // Execute task asynchronously (don't await completion)
-        this.executeTaskAsync(task, execution.id);
+        this.executeTaskAsync(task, execution.id).catch((err) => {
+          this.logger.error(`Async task execution failed for task ${task.id}`, err);
+        });
 
         // Update nextRunAt for next execution
         await this.updateNextRunTime(task);
@@ -166,6 +170,9 @@ export class TasksService implements OnModuleInit {
       }
     }
 
+    // Check for new emails and trigger agent
+    await this.processInboundEmails();
+
     return {
       executedCount: results.filter((r) => r.status === 'started').length,
       tasks: results,
@@ -174,13 +181,81 @@ export class TasksService implements OnModuleInit {
   }
 
   /**
+   * Check for new unread emails and trigger agent for each
+   */
+  private async processInboundEmails(): Promise<void> {
+    if (!this.emailService.isConfigured()) return;
+
+    try {
+      const state = await this.db.getEmailCheckState();
+      const lastCheckAt = state?.lastCheckAt || new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+      const emails = await this.emailService.getNewEmailsSince(lastCheckAt);
+      if (emails.length === 0) return;
+
+      this.logger.log(`Found ${emails.length} new emails to process`);
+
+      for (const email of emails) {
+        const executionId = randomUUID();
+        const taskName = `Email: ${email.subject}`;
+        const prompt = `You received a new email. Please read it, understand what is being asked, and take appropriate action (reply, research, save information, etc.).\n\n**From**: ${email.from}\n**Subject**: ${email.subject}\n**Date**: ${email.date}\n**Message ID**: ${email.id}\n\n**Body**:\n${email.body}`;
+
+        await this.db.createExecution({
+          id: executionId,
+          taskId: null,
+          taskName,
+          prompt,
+          startedAt: new Date(),
+        });
+
+        // Execute asynchronously
+        this.executeEmailTask(executionId, prompt, email.id).catch((err) => {
+          this.logger.error(`Email task execution failed for ${email.id}`, err);
+        });
+      }
+
+      // Update check state
+      await this.db.upsertEmailCheckState(new Date().toISOString(), emails[0]?.id);
+    } catch (error: any) {
+      this.logger.error('Failed to process inbound emails', error);
+    }
+  }
+
+  private async executeEmailTask(executionId: string, prompt: string, emailId: string): Promise<void> {
+    try {
+      const result = await this.agentService.runAgent(prompt, { executionId });
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+
+      await this.db.updateExecution(executionId, {
+        status: 'success',
+        result: resultStr,
+        completedAt: new Date(),
+      });
+
+      this.logger.log(`Email task for ${emailId} completed successfully`);
+    } catch (error: any) {
+      this.logger.error(`Email task for ${emailId} failed`, error);
+      await this.db.updateExecution(executionId, {
+        status: 'error',
+        result: error.message,
+        completedAt: new Date(),
+      });
+    }
+  }
+
+  /**
    * Calculate next run time from cron expression
    */
   private calculateNextRunTime(cronSchedule: string, timezone?: string | null): Date {
-    const interval = CronExpressionParser.parse(cronSchedule, {
-      tz: timezone || 'UTC',
-    });
-    return interval.next().toDate();
+    try {
+      const interval = CronExpressionParser.parse(cronSchedule, {
+        tz: timezone || 'UTC',
+      });
+      const nextRun = interval.next().toDate();
+      return nextRun;
+    } catch (error: any) {
+      throw error;
+    }
   }
 
   /**

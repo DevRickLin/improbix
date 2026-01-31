@@ -9,6 +9,8 @@ import { TasksModule } from './tasks/tasks.module';
 import { AuthModule } from './auth/auth.module';
 import { TopicsModule } from './topics/topics.module';
 import { ReportsModule } from './reports/reports.module';
+import { EmailModule } from './email/email.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 @Module({
   imports: [
@@ -19,11 +21,13 @@ import { ReportsModule } from './reports/reports.module';
     ScheduleModule.forRoot(),
     AuthModule,
     FeishuModule,
+    EmailModule,
     SearchModule,
     AgentModule,
     TasksModule,
     TopicsModule,
     ReportsModule,
+    SessionsModule,
   ],
 })
 export class AppModule {}

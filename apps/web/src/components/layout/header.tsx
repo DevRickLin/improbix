@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, History, ListTodo, Bug, BookOpen, FileText } from 'lucide-react';
+import { LogOut, History, ListTodo, Bug, BookOpen, FileText, MessageCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -32,6 +32,13 @@ export function Header() {
             <span className="font-bold text-xl">Improbix</span>
           </Link>
           <nav className="flex items-center space-x-6 text-sm font-medium">
+            <Link
+              href="/dashboard/chat"
+              className="flex items-center transition-colors hover:text-foreground/80 text-foreground/60"
+            >
+              <MessageCircle className="mr-1 h-4 w-4" />
+              Chat
+            </Link>
             <Link
               href="/dashboard"
               className="flex items-center transition-colors hover:text-foreground/80 text-foreground/60"

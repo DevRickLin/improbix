@@ -12,7 +12,8 @@ interface ChatRequestBody {
     parts?: Array<{ type: string; text?: string }>;
   }>;
   prompt?: string;
-  taskId?: number;  // 可选：传入任务ID以获取关联的主题
+  taskId?: number;
+  sessionId?: string;
 }
 
 @Controller('agent')
@@ -47,10 +48,31 @@ export class AgentController {
         this.logger.log('Chat request without taskId');
       }
 
-      const result = this.agentService.streamChat(messages, { topicsContext });
+      // Save user message to session if sessionId provided
+      if (body.sessionId) {
+        const lastUserMsg = messages[messages.length - 1];
+        if (lastUserMsg?.role === 'user') {
+          const content = typeof lastUserMsg.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg.content);
+          await this.db.createMessage(body.sessionId, 'user', content).catch((e) =>
+            this.logger.warn(`Failed to save user message: ${e.message}`),
+          );
+        }
+      }
 
-      // 使用 pipeUIMessageStreamToResponse 的第二个参数传入自定义 headers
-      // https://ai-sdk.dev/docs/reference/ai-sdk-ui/pipe-ui-message-stream-to-response
+      const result = await this.agentService.streamChat(messages, { topicsContext });
+
+      // Collect assistant response for session persistence
+      if (body.sessionId) {
+        const sessionId = body.sessionId;
+        result.text.then((text) => {
+          if (text) {
+            this.db.createMessage(sessionId, 'assistant', text).catch((e) =>
+              this.logger.warn(`Failed to save assistant message: ${e.message}`),
+            );
+          }
+        }).catch(() => {});
+      }
+
       result.pipeUIMessageStreamToResponse(res, {
         headers: {
           'Cache-Control': 'no-cache, no-transform',

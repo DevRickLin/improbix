@@ -3,6 +3,9 @@ import { z } from 'zod';
 import type { SearchService } from '../search/search.service';
 import type { FeishuService } from '../feishu/feishu.service';
 import type { ReportsService } from '../reports/reports.service';
+import type { EmailService } from '../email/email.service';
+import type { DatabaseService } from '../database/database.service';
+import { CronExpressionParser } from 'cron-parser';
 
 export interface AgentToolsContext {
   executionId?: string;
@@ -17,6 +20,8 @@ export function createAgentTools(
   searchService: SearchService,
   feishuService: FeishuService,
   reportsService: ReportsService,
+  emailService: EmailService,
+  db: DatabaseService,
   context: AgentToolsContext = {},
 ) {
   const searchInternet = tool({
@@ -229,15 +234,275 @@ export function createAgentTools(
     },
   });
 
+  // ==================== Email Tools ====================
+
+  const readEmails = tool({
+    description:
+      'Read emails from the connected Gmail inbox. Can search with a Gmail query or list unread emails. Use this to check for new messages, find specific emails, or review inbox content.',
+    inputSchema: z.object({
+      query: z
+        .string()
+        .optional()
+        .describe('Gmail search query (e.g., "from:user@example.com", "subject:report", "is:unread"). If omitted, returns unread emails.'),
+      maxResults: z.number().optional().describe('Maximum number of emails to return (default: 10)'),
+    }),
+    execute: async ({ query, maxResults = 10 }) => {
+      if (!emailService.isConfigured()) {
+        return 'Gmail is not configured. Please set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN.';
+      }
+      try {
+        const emails = query
+          ? await emailService.searchEmails(query, maxResults)
+          : await emailService.getUnreadEmails(maxResults);
+
+        if (emails.length === 0) {
+          return 'No emails found.';
+        }
+
+        return JSON.stringify(
+          emails.map((e) => ({
+            id: e.id,
+            from: e.from,
+            subject: e.subject,
+            date: e.date,
+            snippet: e.snippet,
+            body: e.body.substring(0, 2000),
+          })),
+        );
+      } catch (error: any) {
+        return `Failed to read emails: ${error.message}`;
+      }
+    },
+  });
+
+  // ==================== Task Management Tools ====================
+
+  const createTask = tool({
+    description: 'Create a new scheduled task. The task will run automatically based on the cron schedule.',
+    inputSchema: z.object({
+      name: z.string().describe('Name of the task'),
+      cronSchedule: z.string().describe('Cron expression (e.g., "0 9 * * *" for daily at 9am)'),
+      prompt: z.string().describe('The prompt/instructions for the AI agent when this task runs'),
+      timezone: z.string().optional().describe('Timezone (e.g., "Asia/Shanghai"). Defaults to UTC.'),
+    }),
+    execute: async ({ name, cronSchedule, prompt, timezone }) => {
+      try {
+        CronExpressionParser.parse(cronSchedule);
+      } catch {
+        return `Invalid cron expression: ${cronSchedule}`;
+      }
+      try {
+        const interval = CronExpressionParser.parse(cronSchedule, { tz: timezone || 'UTC' });
+        const nextRunAt = interval.next().toDate();
+        const task = await db.createTask({ name, cronSchedule, prompt, timezone: timezone || null, nextRunAt });
+        return `Task created successfully (ID: ${task.id}, name: ${task.name}, next run: ${nextRunAt.toISOString()})`;
+      } catch (error: any) {
+        return `Failed to create task: ${error.message}`;
+      }
+    },
+  });
+
+  const listTasks = tool({
+    description: 'List all scheduled tasks with their status and associated topics.',
+    inputSchema: z.object({}),
+    execute: async () => {
+      try {
+        const tasks = await db.findAllTasks();
+        const result: Array<Record<string, unknown>> = [];
+        for (const t of tasks) {
+          const topicIds = await db.findTaskTopicIds(t.id);
+          result.push({ ...t, topicIds });
+        }
+        return JSON.stringify(result);
+      } catch (error: any) {
+        return `Failed to list tasks: ${error.message}`;
+      }
+    },
+  });
+
+  const updateTask = tool({
+    description: 'Update an existing task by ID. Only provided fields will be changed.',
+    inputSchema: z.object({
+      id: z.number().describe('Task ID'),
+      name: z.string().optional().describe('New name'),
+      cronSchedule: z.string().optional().describe('New cron expression'),
+      prompt: z.string().optional().describe('New prompt'),
+      isActive: z.boolean().optional().describe('Enable or disable the task'),
+      timezone: z.string().optional().describe('New timezone'),
+      topicIds: z.array(z.number()).optional().describe('Topic IDs to associate'),
+    }),
+    execute: async ({ id, topicIds, ...data }) => {
+      try {
+        if (data.cronSchedule) {
+          CronExpressionParser.parse(data.cronSchedule);
+        }
+        const existing = await db.findTaskById(id);
+        if (!existing) return `Task ${id} not found.`;
+
+        if (data.cronSchedule || data.timezone !== undefined) {
+          const cron = data.cronSchedule || existing.cronSchedule;
+          const tz = data.timezone !== undefined ? data.timezone : existing.timezone;
+          const interval = CronExpressionParser.parse(cron, { tz: tz || 'UTC' });
+          (data as any).nextRunAt = interval.next().toDate();
+        }
+        await db.updateTask(id, data);
+        if (topicIds !== undefined) {
+          await db.setTaskTopics(id, topicIds);
+        }
+        return `Task ${id} updated successfully.`;
+      } catch (error: any) {
+        return `Failed to update task: ${error.message}`;
+      }
+    },
+  });
+
+  const deleteTask = tool({
+    description: 'Delete a scheduled task by ID.',
+    inputSchema: z.object({
+      id: z.number().describe('Task ID to delete'),
+    }),
+    execute: async ({ id }) => {
+      try {
+        await db.deleteTask(id);
+        return `Task ${id} deleted.`;
+      } catch (error: any) {
+        return `Failed to delete task: ${error.message}`;
+      }
+    },
+  });
+
+  // ==================== Topic Management Tools ====================
+
+  const createTopic = tool({
+    description: 'Create a new research topic/focus area with optional information sources.',
+    inputSchema: z.object({
+      name: z.string().describe('Topic name'),
+      prompt: z.string().describe('Research goal/instructions for this topic'),
+      sources: z.array(z.object({
+        name: z.string().describe('Source name'),
+        url: z.string().describe('Source URL'),
+        description: z.string().optional().describe('Source description'),
+      })).optional().describe('Information sources to monitor'),
+    }),
+    execute: async ({ name, prompt, sources }) => {
+      try {
+        const topic = await db.createTopic({ name, prompt });
+        if (sources) {
+          for (const s of sources) {
+            await db.createTopicSource({ topicId: topic.id, name: s.name, url: s.url, description: s.description });
+          }
+        }
+        return `Topic created (ID: ${topic.id}, name: ${topic.name})`;
+      } catch (error: any) {
+        return `Failed to create topic: ${error.message}`;
+      }
+    },
+  });
+
+  const listTopics = tool({
+    description: 'List all research topics with their sources.',
+    inputSchema: z.object({}),
+    execute: async () => {
+      try {
+        const topics = await db.findAllTopicsWithSources();
+        return JSON.stringify(topics);
+      } catch (error: any) {
+        return `Failed to list topics: ${error.message}`;
+      }
+    },
+  });
+
+  const updateTopic = tool({
+    description: 'Update a topic by ID.',
+    inputSchema: z.object({
+      id: z.number().describe('Topic ID'),
+      name: z.string().optional(),
+      prompt: z.string().optional(),
+    }),
+    execute: async ({ id, ...data }) => {
+      try {
+        await db.updateTopic(id, data);
+        return `Topic ${id} updated.`;
+      } catch (error: any) {
+        return `Failed to update topic: ${error.message}`;
+      }
+    },
+  });
+
+  const deleteTopic = tool({
+    description: 'Delete a topic by ID.',
+    inputSchema: z.object({
+      id: z.number().describe('Topic ID to delete'),
+    }),
+    execute: async ({ id }) => {
+      try {
+        await db.deleteTopic(id);
+        return `Topic ${id} deleted.`;
+      } catch (error: any) {
+        return `Failed to delete topic: ${error.message}`;
+      }
+    },
+  });
+
+  // ==================== Additional Tools ====================
+
+  const crawlWebsite = tool({
+    description: 'Crawl multiple pages from a website. Use this for comprehensive site analysis when you need content from many pages.',
+    inputSchema: z.object({
+      url: z.string().url().describe('The website URL to crawl'),
+      limit: z.number().optional().describe('Maximum number of pages to crawl (default: 10)'),
+    }),
+    execute: async ({ url, limit }) => {
+      try {
+        const result = await searchService.crawlUrl(url, { limit });
+        return JSON.stringify(result);
+      } catch (error: any) {
+        return `Failed to crawl: ${error.message}`;
+      }
+    },
+  });
+
+  const sendFeishuMessage = tool({
+    description: 'Send a message to Feishu/Lark. Can send plain text or a formatted card.',
+    inputSchema: z.object({
+      text: z.string().describe('Message text content'),
+      format: z.enum(['text', 'card']).optional().describe('Message format: "text" for plain text, "card" for formatted card (default: text)'),
+      title: z.string().optional().describe('Card title (only used when format is "card")'),
+    }),
+    execute: async ({ text, format = 'text', title }) => {
+      try {
+        if (format === 'card' && title) {
+          await feishuService.sendSimpleCard(title, text, { headerColor: 'blue' });
+        } else {
+          await feishuService.sendText(text);
+        }
+        return 'Message sent to Feishu successfully.';
+      } catch (error: any) {
+        return `Failed to send Feishu message: ${error.message}`;
+      }
+    },
+  });
+
   return {
     search_internet: searchInternet,
     scrape_url: scrapeUrl,
     map_website: mapWebsite,
+    crawl_website: crawlWebsite,
     extract_data: extractData,
     send_report: sendReport,
     save_collected_link: saveCollectedLink,
     query_reports: queryReports,
     query_collected_links: queryCollectedLinks,
+    read_emails: readEmails,
+    create_task: createTask,
+    list_tasks: listTasks,
+    update_task: updateTask,
+    delete_task: deleteTask,
+    create_topic: createTopic,
+    list_topics: listTopics,
+    update_topic: updateTopic,
+    delete_topic: deleteTopic,
+    send_feishu_message: sendFeishuMessage,
   };
 }
 

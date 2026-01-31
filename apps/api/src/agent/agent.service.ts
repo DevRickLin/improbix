@@ -4,20 +4,28 @@ import {
   createGateway,
   streamText,
   generateText,
+  pruneMessages,
   stepCountIs,
   type CoreMessage,
 } from 'ai';
 import { ProxyAgent } from 'undici';
 import { SearchService } from '../search/search.service';
 import { FeishuService } from '../feishu/feishu.service';
+import { EmailService } from '../email/email.service';
 import { ReportsService } from '../reports/reports.service';
-import { TopicWithSources } from '../database/database.service';
+import { DatabaseService, TopicWithSources } from '../database/database.service';
 import { createAgentTools, type AgentTools } from './tools';
 import { AgentPromptBuilder } from './prompts';
 
 type GatewayProvider = ReturnType<typeof createGateway>;
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4-20250514';
+const DEFAULT_SUMMARY_MODEL = 'anthropic/claude-haiku-3';
+const DEFAULT_COMPRESS_THRESHOLD = 20;
+const RECENT_MESSAGES_TO_KEEP = 10;
+
+const SUMMARY_PROMPT = `Summarize the following conversation concisely. Preserve key facts, decisions, and action items. Omit greetings, filler, and redundant details. Output only the summary in the same language as the conversation.`;
+
 
 export interface RunAgentOptions {
   topicsContext?: TopicWithSources[];
@@ -30,6 +38,8 @@ export class AgentService implements OnModuleInit {
   private readonly logger = new Logger(AgentService.name);
   private gateway: GatewayProvider | null = null;
   private modelId: string = DEFAULT_MODEL;
+  private summaryModelId: string = DEFAULT_SUMMARY_MODEL;
+  private compressThreshold: number = DEFAULT_COMPRESS_THRESHOLD;
   private promptBuilder = new AgentPromptBuilder();
 
   constructor(
@@ -37,6 +47,8 @@ export class AgentService implements OnModuleInit {
     @Inject(SearchService) private searchService: SearchService,
     @Inject(FeishuService) private feishuService: FeishuService,
     @Inject(ReportsService) private reportsService: ReportsService,
+    @Inject(EmailService) private emailService: EmailService,
+    @Inject(DatabaseService) private db: DatabaseService,
   ) {}
 
   async onModuleInit() {
@@ -52,8 +64,10 @@ export class AgentService implements OnModuleInit {
     });
 
     this.modelId = this.configService.get<string>('AI_MODEL') || DEFAULT_MODEL;
+    this.summaryModelId = this.configService.get<string>('AI_SUMMARY_MODEL') || DEFAULT_SUMMARY_MODEL;
+    this.compressThreshold = parseInt(this.configService.get<string>('CONTEXT_COMPRESS_THRESHOLD') || '', 10) || DEFAULT_COMPRESS_THRESHOLD;
 
-    this.logger.log(`Agent initialized with model: ${this.modelId}`);
+    this.logger.log(`Agent initialized with model: ${this.modelId}, summary model: ${this.summaryModelId}`);
   }
 
   /**
@@ -64,32 +78,91 @@ export class AgentService implements OnModuleInit {
       this.searchService,
       this.feishuService,
       this.reportsService,
+      this.emailService,
+      this.db,
       context,
     );
   }
 
   /**
+   * 混合上下文压缩：先裁剪 tool calls/reasoning，超阈值后用轻量模型生成摘要
+   */
+  private async compressMessages(messages: CoreMessage[]): Promise<CoreMessage[]> {
+    // Phase 1: prune tool calls and reasoning
+    const pruned = pruneMessages({
+      messages,
+      reasoning: 'before-last-message',
+      toolCalls: 'before-last-2-messages',
+      emptyMessages: 'remove',
+    });
+
+    // Phase 2: if still over threshold, summarize old messages
+    if (pruned.length <= this.compressThreshold) {
+      return pruned;
+    }
+
+    const oldMessages = pruned.slice(0, -RECENT_MESSAGES_TO_KEEP);
+    const recentMessages = pruned.slice(-RECENT_MESSAGES_TO_KEEP);
+
+    try {
+      const { text: summary } = await generateText({
+        model: this.gateway!(this.summaryModelId),
+        messages: [
+          {
+            role: 'user',
+            content: `${SUMMARY_PROMPT}\n\n${oldMessages.map((m) => `[${m.role}]: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`).join('\n')}`,
+          },
+        ],
+      });
+
+      this.logger.log(`Compressed ${oldMessages.length} messages into summary (${summary.length} chars)`);
+
+      return [
+        { role: 'user', content: `[Previous conversation summary]\n${summary}` },
+        { role: 'assistant', content: 'Understood, I have the context from our previous conversation.' },
+        ...recentMessages,
+      ];
+    } catch (error) {
+      this.logger.warn(`Context compression failed, falling back to truncation: ${error}`);
+      return recentMessages;
+    }
+  }
+
+  /**
    * 流式执行 Agent
    */
-  streamChat(messages: CoreMessage[], options?: { topicsContext?: TopicWithSources[]; executionId?: string; taskId?: number }) {
+  async streamChat(messages: CoreMessage[], options?: { topicsContext?: TopicWithSources[]; executionId?: string; taskId?: number }) {
     if (!this.gateway) {
       throw new Error('Agent not initialized');
     }
 
     const systemPrompt = this.promptBuilder.build(options?.topicsContext);
-    const tools = this.getTools({ 
+    const tools = this.getTools({
       executionId: options?.executionId,
-      taskId: options?.taskId 
+      taskId: options?.taskId
     });
 
-    this.logger.log(`Starting agent stream with ${messages.length} messages, ${options?.topicsContext?.length || 0} topics`);
+    const compressedMessages = await this.compressMessages(messages);
+    this.logger.log(`Starting agent stream with ${messages.length} -> ${compressedMessages.length} messages, ${options?.topicsContext?.length || 0} topics`);
 
     return streamText({
       model: this.gateway(this.modelId),
       system: systemPrompt,
-      messages,
+      messages: compressedMessages,
       tools,
       stopWhen: stepCountIs(100),
+      prepareStep: async ({ messages: stepMessages }) => {
+        if (stepMessages.length > this.compressThreshold) {
+          const pruned = pruneMessages({
+            messages: stepMessages,
+            reasoning: 'before-last-message',
+            toolCalls: 'before-last-2-messages',
+            emptyMessages: 'remove',
+          });
+          return { messages: pruned };
+        }
+        return {};
+      },
       onStepFinish: (event) => {
         this.logger.log(`Step finished: ${event.finishReason}`);
         if (event.toolCalls && event.toolCalls.length > 0) {

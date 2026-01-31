@@ -84,17 +84,21 @@ export class DatabaseService implements OnModuleInit {
     const tursoUrl = this.configService.get<string>('TURSO_DATABASE_URL');
     const tursoToken = this.configService.get<string>('TURSO_AUTH_TOKEN');
 
-    if (this.isVercel && tursoUrl) {
-      this.logger.log('Connecting to Turso database...');
-      this.client = createClient({
-        url: tursoUrl,
-        authToken: tursoToken,
-      });
-    } else {
-      this.logger.log('Using local SQLite database...');
-      this.client = createClient({
-        url: 'file:sqlite.db',
-      });
+    try {
+      if (this.isVercel && tursoUrl) {
+        this.logger.log('Connecting to Turso database...');
+        this.client = createClient({
+          url: tursoUrl,
+          authToken: tursoToken,
+        });
+      } else {
+        this.logger.log('Using local SQLite database...');
+        this.client = createClient({
+          url: 'file:sqlite.db',
+        });
+      }
+    } catch (error: any) {
+      throw error;
     }
   }
 
@@ -169,6 +173,28 @@ export class DatabaseService implements OnModuleInit {
         source VARCHAR(255),
         collectedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (reportId) REFERENCES ai_report(id) ON DELETE CASCADE
+      )`,
+      // Chat session tables
+      `CREATE TABLE IF NOT EXISTS chat_session (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS chat_message (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sessionId TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        parts TEXT,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sessionId) REFERENCES chat_session(id) ON DELETE CASCADE
+      )`,
+      // Email check state table
+      `CREATE TABLE IF NOT EXISTS email_check_state (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        lastCheckAt TEXT NOT NULL,
+        lastMessageId TEXT
       )`,
       // Indexes for better query performance
       `CREATE INDEX IF NOT EXISTS idx_ai_report_createdAt ON ai_report(createdAt DESC)`,
@@ -887,6 +913,107 @@ export class DatabaseService implements OnModuleInit {
       args: [cutoffDate.toISOString()],
     });
     return Number(result.rowsAffected);
+  }
+
+  // ==================== Chat Session Operations ====================
+
+  async createSession(id: string, title?: string): Promise<{ id: string; title: string | null; createdAt: string; updatedAt: string }> {
+    const now = new Date().toISOString();
+    await this.client.execute({
+      sql: 'INSERT INTO chat_session (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)',
+      args: [id, title || null, now, now],
+    });
+    return { id, title: title || null, createdAt: now, updatedAt: now };
+  }
+
+  async findAllSessions(): Promise<Array<{ id: string; title: string | null; createdAt: string; updatedAt: string }>> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM chat_session ORDER BY updatedAt DESC',
+      args: [],
+    });
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      title: row.title ? String(row.title) : null,
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }));
+  }
+
+  async findSessionById(id: string): Promise<{ id: string; title: string | null; createdAt: string; updatedAt: string } | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM chat_session WHERE id = ?',
+      args: [id],
+    });
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      title: row.title ? String(row.title) : null,
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    };
+  }
+
+  async updateSessionTitle(id: string, title: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE chat_session SET title = ?, updatedAt = ? WHERE id = ?',
+      args: [title, new Date().toISOString(), id],
+    });
+  }
+
+  async touchSession(id: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE chat_session SET updatedAt = ? WHERE id = ?',
+      args: [new Date().toISOString(), id],
+    });
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.client.execute({ sql: 'DELETE FROM chat_session WHERE id = ?', args: [id] });
+  }
+
+  async createMessage(sessionId: string, role: string, content: string, parts?: string): Promise<void> {
+    await this.client.execute({
+      sql: 'INSERT INTO chat_message (sessionId, role, content, parts, createdAt) VALUES (?, ?, ?, ?, ?)',
+      args: [sessionId, role, content, parts || null, new Date().toISOString()],
+    });
+  }
+
+  async findSessionMessages(sessionId: string): Promise<Array<{ id: number; role: string; content: string; parts: string | null; createdAt: string }>> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM chat_message WHERE sessionId = ? ORDER BY id ASC',
+      args: [sessionId],
+    });
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      role: String(row.role),
+      content: String(row.content),
+      parts: row.parts ? String(row.parts) : null,
+      createdAt: String(row.createdAt),
+    }));
+  }
+
+  // ==================== Email Check State Operations ====================
+
+  async getEmailCheckState(): Promise<{ lastCheckAt: string; lastMessageId: string | null } | null> {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM email_check_state WHERE id = 'default'",
+      args: [],
+    });
+    if (result.rows.length === 0) return null;
+    return {
+      lastCheckAt: String(result.rows[0].lastCheckAt),
+      lastMessageId: result.rows[0].lastMessageId ? String(result.rows[0].lastMessageId) : null,
+    };
+  }
+
+  async upsertEmailCheckState(lastCheckAt: string, lastMessageId?: string | null): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO email_check_state (id, lastCheckAt, lastMessageId)
+            VALUES ('default', ?, ?)
+            ON CONFLICT(id) DO UPDATE SET lastCheckAt = ?, lastMessageId = ?`,
+      args: [lastCheckAt, lastMessageId || null, lastCheckAt, lastMessageId || null],
+    });
   }
 
   private rowToCollectedLink(row: any): AICollectedLink {

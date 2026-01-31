@@ -30,6 +30,7 @@
     "cron-parser": "^5.4.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "googleapis": "^171.0.0",
     "https-proxy-agent": "^7.0.6",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
@@ -39,8 +40,8 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@nestjs/platform-express": "^11.1.9",
     "@nestjs/cli": "^11.0.0",
+    "@nestjs/platform-express": "^11.1.9",
     "@types/aws-lambda": "^8.10.159",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
@@ -48,8 +49,8 @@
     "@types/passport-local": "^1.0.38",
     "@vercel/node": "^5.5.15",
     "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "ts-node": "^10.9.2"
+    "typescript": "^5.9.3"
   }
 }
