@@ -7,10 +7,11 @@ import { ReportsModule } from '../reports/reports.module';
 import { DatabaseModule } from '../database/database.module';
 import { EmailModule } from '../email/email.module';
 import { SandboxModule } from '../sandbox/sandbox.module';
+import { SimilarWebModule } from '../similarweb/similarweb.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule, SandboxModule],
+  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule, SandboxModule, SimilarWebModule],
   controllers: [AgentController],
   providers: [AgentService],
   exports: [AgentService],

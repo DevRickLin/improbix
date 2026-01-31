@@ -108,6 +108,11 @@ export class AgentPromptBuilder {
 - **update_topic**: Update a topic's name or prompt.
 - **delete_topic**: Delete a topic by ID.
 
+### Data Platforms
+- **query_similarweb**: Query SimilarWeb for website traffic analytics (visits, engagement, traffic sources, keywords, competitors). Requires SIMILARWEB_API_KEY.
+- **query_questmobile**: Query QuestMobile for Chinese mobile internet data (app rankings, industry reports, mobile usage trends). Uses web scraping.
+- **query_talkingdata**: Query TalkingData for Chinese mobile app and device data (app rankings, device market share, OS distribution). Uses web scraping.
+
 ### Messaging
 - **send_feishu_message**: Send a text or card message to Feishu/Lark directly.
 
