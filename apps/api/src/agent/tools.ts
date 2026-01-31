@@ -5,6 +5,7 @@ import type { FeishuService } from '../feishu/feishu.service';
 import type { ReportsService } from '../reports/reports.service';
 import type { EmailService } from '../email/email.service';
 import type { DatabaseService } from '../database/database.service';
+import type { SandboxService } from '../sandbox/sandbox.service';
 import { CronExpressionParser } from 'cron-parser';
 
 export interface AgentToolsContext {
@@ -22,6 +23,7 @@ export function createAgentTools(
   reportsService: ReportsService,
   emailService: EmailService,
   db: DatabaseService,
+  sandboxService: SandboxService,
   context: AgentToolsContext = {},
 ) {
   const searchInternet = tool({
@@ -483,6 +485,39 @@ export function createAgentTools(
     },
   });
 
+  // ==================== Code Execution Tools ====================
+
+  const executeCode = tool({
+    description:
+      'Execute Python or JavaScript code in a secure sandboxed environment. Use this for data analysis, calculations, generating charts, or running any code. The sandbox persists state between calls within the same session.',
+    inputSchema: z.object({
+      language: z.enum(['python', 'javascript']).describe('Programming language'),
+      code: z.string().describe('The code to execute'),
+    }),
+    execute: async ({ language, code }) => {
+      if (!sandboxService.isConfigured()) {
+        return 'Code execution is not available. E2B_API_KEY is not configured.';
+      }
+      const result = await sandboxService.executeCode(language, code);
+      return JSON.stringify(result);
+    },
+  });
+
+  const executeShell = tool({
+    description:
+      'Execute a shell command in the sandbox environment. Use this for installing packages (pip install, npm install), file operations, or system commands.',
+    inputSchema: z.object({
+      command: z.string().describe('The shell command to execute'),
+    }),
+    execute: async ({ command }) => {
+      if (!sandboxService.isConfigured()) {
+        return 'Shell execution is not available. E2B_API_KEY is not configured.';
+      }
+      const result = await sandboxService.executeShell(command);
+      return JSON.stringify(result);
+    },
+  });
+
   return {
     search_internet: searchInternet,
     scrape_url: scrapeUrl,
@@ -503,6 +538,8 @@ export function createAgentTools(
     update_topic: updateTopic,
     delete_topic: deleteTopic,
     send_feishu_message: sendFeishuMessage,
+    execute_code: executeCode,
+    execute_shell: executeShell,
   };
 }
 

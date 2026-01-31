@@ -2,16 +2,16 @@ import { apiClient } from './client';
 
 export interface ChatSession {
   id: string;
-  title: string | null;
+  title: string;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface ChatMessage {
-  id: number;
+  id: string;
+  chatId: string;
   role: string;
-  content: string;
-  parts: string | null;
+  parts: unknown[];
+  attachments: unknown[];
   createdAt: string;
 }
 

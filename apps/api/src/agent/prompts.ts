@@ -111,6 +111,10 @@ export class AgentPromptBuilder {
 ### Messaging
 - **send_feishu_message**: Send a text or card message to Feishu/Lark directly.
 
+### Code Execution (Sandbox)
+- **execute_code**: Execute Python or JavaScript code in a secure sandboxed environment. State persists between calls within the same session. Use this for data analysis, calculations, chart generation, or verifying code logic.
+- **execute_shell**: Execute shell commands in the sandbox. Use this to install packages (e.g., \`pip install pandas\`), manage files, or run system commands.
+
 ### save_collected_link
 - **WHEN**: As soon as you find a URL that contains valuable information relevant to the user's request or topic.
 - **WHY**: To build a structured knowledge base of links.

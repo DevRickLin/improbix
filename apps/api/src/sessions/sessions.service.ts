@@ -6,31 +6,26 @@ export class SessionsService {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   async createSession(id: string, title?: string) {
-    return this.db.createSession(id, title);
+    return this.db.saveChat({ id, title: title || 'New Chat' });
   }
 
   async getAllSessions() {
-    return this.db.findAllSessions();
+    return this.db.getAllChats();
   }
 
   async getSession(id: string) {
-    const session = await this.db.findSessionById(id);
-    if (!session) return null;
-    const messages = await this.db.findSessionMessages(id);
-    return { ...session, messages };
+    const chat = await this.db.getChatById(id);
+    if (!chat) return null;
+    const messages = await this.db.getMessagesByChatId(id);
+    return { ...chat, messages };
   }
 
   async updateTitle(id: string, title: string) {
-    await this.db.updateSessionTitle(id, title);
-    return this.db.findSessionById(id);
+    await this.db.updateChatTitle(id, title);
+    return this.db.getChatById(id);
   }
 
   async deleteSession(id: string) {
-    await this.db.deleteSession(id);
-  }
-
-  async addMessage(sessionId: string, role: string, content: string, parts?: string) {
-    await this.db.createMessage(sessionId, role, content, parts);
-    await this.db.touchSession(sessionId);
+    await this.db.deleteChat(id);
   }
 }

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChat, type UIMessage } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
+import { useAutoResume } from '@/lib/hooks/use-auto-resume';
 import {
   Plus,
   Trash2,
@@ -124,38 +125,59 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const currentSessionIdRef = useRef(currentSessionId);
 
-  // Create transport with session support
+  // Keep ref in sync
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  // Transport sends only the last message + sessionId
   const transport = useCallback(() => {
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
     return new DefaultChatTransport({
       api: chatEndpoint,
       headers,
-      prepareSendMessagesRequest({ messages }) {
+      prepareSendMessagesRequest({ messages, id }) {
+        const lastMessage = messages.at(-1);
         return {
           body: {
-            messages,
-            sessionId: useChatStore.getState().currentSessionId ?? undefined,
+            id,
+            message: lastMessage,
+            sessionId: currentSessionIdRef.current ?? undefined,
           },
         };
       },
     });
   }, [token]);
 
+  const chatTransport = useMemo(() => transport(), [transport]);
+
   const {
     messages,
     sendMessage,
     status,
     setMessages,
+    resumeStream,
   } = useChat({
-    transport: transport(),
+    id: currentSessionId ?? undefined,
+    transport: chatTransport,
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
   const isLoading = status === 'streaming' || status === 'submitted';
+
+  // Auto-resume: if last message is user (assistant never responded), try to resume stream
+  useAutoResume({
+    autoResume: !!currentSessionId,
+    initialMessages,
+    resumeStream,
+    setMessages,
+  });
 
   // Load sessions on mount
   useEffect(() => {
@@ -166,18 +188,20 @@ export default function ChatPage() {
   useEffect(() => {
     if (!currentSessionId) {
       setMessages([]);
+      setInitialMessages([]);
       return;
     }
     sessionsApi.get(currentSessionId).then((session) => {
-      const uiMessages: UIMessage[] = session.messages.map((m, i) => ({
-        id: String(m.id || i),
+      const uiMessages: UIMessage[] = session.messages.map((m) => ({
+        id: m.id,
         role: m.role as 'user' | 'assistant',
-        content: m.content,
-        parts: [{ type: 'text' as const, text: m.content }],
+        parts: m.parts as UIMessage['parts'],
       }));
       setMessages(uiMessages);
+      setInitialMessages(uiMessages);
     }).catch(() => {
       setMessages([]);
+      setInitialMessages([]);
     });
   }, [currentSessionId, setMessages]);
 

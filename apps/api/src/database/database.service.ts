@@ -174,21 +174,26 @@ export class DatabaseService implements OnModuleInit {
         collectedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (reportId) REFERENCES ai_report(id) ON DELETE CASCADE
       )`,
-      // Chat session tables
-      `CREATE TABLE IF NOT EXISTS chat_session (
+      // Chat tables (ai-chatbot architecture)
+      `CREATE TABLE IF NOT EXISTS chat (
         id TEXT PRIMARY KEY,
-        title TEXT,
-        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+        title TEXT NOT NULL,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
-      `CREATE TABLE IF NOT EXISTS chat_message (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sessionId TEXT NOT NULL,
+      `CREATE TABLE IF NOT EXISTS message (
+        id TEXT PRIMARY KEY,
+        chatId TEXT NOT NULL,
         role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        parts TEXT,
+        parts TEXT NOT NULL,
+        attachments TEXT DEFAULT '[]',
         createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (sessionId) REFERENCES chat_session(id) ON DELETE CASCADE
+        FOREIGN KEY (chatId) REFERENCES chat(id) ON DELETE CASCADE
+      )`,
+      `CREATE TABLE IF NOT EXISTS stream (
+        id TEXT PRIMARY KEY,
+        chatId TEXT NOT NULL,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (chatId) REFERENCES chat(id) ON DELETE CASCADE
       )`,
       // Email check state table
       `CREATE TABLE IF NOT EXISTS email_check_state (
@@ -915,82 +920,119 @@ export class DatabaseService implements OnModuleInit {
     return Number(result.rowsAffected);
   }
 
-  // ==================== Chat Session Operations ====================
+  // ==================== Chat Operations (ai-chatbot architecture) ====================
 
-  async createSession(id: string, title?: string): Promise<{ id: string; title: string | null; createdAt: string; updatedAt: string }> {
+  async saveChat({ id, title }: { id: string; title: string }): Promise<{ id: string; title: string; createdAt: string }> {
     const now = new Date().toISOString();
     await this.client.execute({
-      sql: 'INSERT INTO chat_session (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)',
-      args: [id, title || null, now, now],
+      sql: 'INSERT OR IGNORE INTO chat (id, title, createdAt) VALUES (?, ?, ?)',
+      args: [id, title, now],
     });
-    return { id, title: title || null, createdAt: now, updatedAt: now };
+    return { id, title, createdAt: now };
   }
 
-  async findAllSessions(): Promise<Array<{ id: string; title: string | null; createdAt: string; updatedAt: string }>> {
+  async getChatById(id: string): Promise<{ id: string; title: string; createdAt: string } | null> {
     const result = await this.client.execute({
-      sql: 'SELECT * FROM chat_session ORDER BY updatedAt DESC',
-      args: [],
-    });
-    return result.rows.map((row) => ({
-      id: String(row.id),
-      title: row.title ? String(row.title) : null,
-      createdAt: String(row.createdAt),
-      updatedAt: String(row.updatedAt),
-    }));
-  }
-
-  async findSessionById(id: string): Promise<{ id: string; title: string | null; createdAt: string; updatedAt: string } | null> {
-    const result = await this.client.execute({
-      sql: 'SELECT * FROM chat_session WHERE id = ?',
+      sql: 'SELECT * FROM chat WHERE id = ?',
       args: [id],
     });
     if (result.rows.length === 0) return null;
     const row = result.rows[0];
     return {
       id: String(row.id),
-      title: row.title ? String(row.title) : null,
+      title: String(row.title),
       createdAt: String(row.createdAt),
-      updatedAt: String(row.updatedAt),
     };
   }
 
-  async updateSessionTitle(id: string, title: string): Promise<void> {
-    await this.client.execute({
-      sql: 'UPDATE chat_session SET title = ?, updatedAt = ? WHERE id = ?',
-      args: [title, new Date().toISOString(), id],
-    });
-  }
-
-  async touchSession(id: string): Promise<void> {
-    await this.client.execute({
-      sql: 'UPDATE chat_session SET updatedAt = ? WHERE id = ?',
-      args: [new Date().toISOString(), id],
-    });
-  }
-
-  async deleteSession(id: string): Promise<void> {
-    await this.client.execute({ sql: 'DELETE FROM chat_session WHERE id = ?', args: [id] });
-  }
-
-  async createMessage(sessionId: string, role: string, content: string, parts?: string): Promise<void> {
-    await this.client.execute({
-      sql: 'INSERT INTO chat_message (sessionId, role, content, parts, createdAt) VALUES (?, ?, ?, ?, ?)',
-      args: [sessionId, role, content, parts || null, new Date().toISOString()],
-    });
-  }
-
-  async findSessionMessages(sessionId: string): Promise<Array<{ id: number; role: string; content: string; parts: string | null; createdAt: string }>> {
+  async getAllChats(): Promise<Array<{ id: string; title: string; createdAt: string }>> {
     const result = await this.client.execute({
-      sql: 'SELECT * FROM chat_message WHERE sessionId = ? ORDER BY id ASC',
-      args: [sessionId],
+      sql: 'SELECT * FROM chat ORDER BY createdAt DESC',
+      args: [],
     });
     return result.rows.map((row) => ({
-      id: Number(row.id),
-      role: String(row.role),
-      content: String(row.content),
-      parts: row.parts ? String(row.parts) : null,
+      id: String(row.id),
+      title: String(row.title),
       createdAt: String(row.createdAt),
     }));
+  }
+
+  async updateChatTitle(id: string, title: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE chat SET title = ? WHERE id = ?',
+      args: [title, id],
+    });
+  }
+
+  async deleteChat(id: string): Promise<void> {
+    await this.client.execute({ sql: 'DELETE FROM chat WHERE id = ?', args: [id] });
+  }
+
+  async saveMessages(messages: Array<{
+    id: string;
+    chatId: string;
+    role: string;
+    parts: unknown;
+    attachments?: unknown;
+    createdAt?: string;
+  }>): Promise<void> {
+    if (messages.length === 0) return;
+    const stmts = messages.map((m) => ({
+      sql: 'INSERT OR IGNORE INTO message (id, chatId, role, parts, attachments, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [
+        m.id,
+        m.chatId,
+        m.role,
+        JSON.stringify(m.parts),
+        JSON.stringify(m.attachments || []),
+        m.createdAt || new Date().toISOString(),
+      ],
+    }));
+    await this.client.batch(stmts);
+  }
+
+  async getMessagesByChatId(chatId: string): Promise<Array<{
+    id: string;
+    chatId: string;
+    role: string;
+    parts: unknown[];
+    attachments: unknown[];
+    createdAt: string;
+  }>> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM message WHERE chatId = ? ORDER BY createdAt ASC',
+      args: [chatId],
+    });
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      chatId: String(row.chatId),
+      role: String(row.role),
+      parts: JSON.parse(String(row.parts)),
+      attachments: JSON.parse(String(row.attachments || '[]')),
+      createdAt: String(row.createdAt),
+    }));
+  }
+
+  async createStreamId(streamId: string, chatId: string): Promise<void> {
+    await this.client.execute({
+      sql: 'INSERT INTO stream (id, chatId, createdAt) VALUES (?, ?, ?)',
+      args: [streamId, chatId, new Date().toISOString()],
+    });
+  }
+
+  async getStreamIdsByChatId(chatId: string): Promise<string[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT id FROM stream WHERE chatId = ? ORDER BY createdAt ASC',
+      args: [chatId],
+    });
+    return result.rows.map((row) => String(row.id));
+  }
+
+  async deleteStreamId(streamId: string): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM stream WHERE id = ?',
+      args: [streamId],
+    });
   }
 
   // ==================== Email Check State Operations ====================

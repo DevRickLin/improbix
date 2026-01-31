@@ -11,12 +11,14 @@ import { TopicsModule } from './topics/topics.module';
 import { ReportsModule } from './reports/reports.module';
 import { EmailModule } from './email/email.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    RedisModule,
     DatabaseModule,
     ScheduleModule.forRoot(),
     AuthModule,

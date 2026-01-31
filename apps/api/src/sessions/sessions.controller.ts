@@ -54,13 +54,4 @@ export class SessionsController {
     await this.sessionsService.deleteSession(id);
     return { success: true };
   }
-
-  @Post(':id/messages')
-  async addMessage(@Param('id') id: string, @Body() body: { role: string; content: string; parts?: string }) {
-    if (!body.role || !body.content) {
-      throw new HttpException('role and content are required', HttpStatus.BAD_REQUEST);
-    }
-    await this.sessionsService.addMessage(id, body.role, body.content, body.parts);
-    return { success: true };
-  }
 }

@@ -6,10 +6,11 @@ import { SearchModule } from '../search/search.module';
 import { ReportsModule } from '../reports/reports.module';
 import { DatabaseModule } from '../database/database.module';
 import { EmailModule } from '../email/email.module';
+import { SandboxModule } from '../sandbox/sandbox.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule],
+  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule, SandboxModule],
   controllers: [AgentController],
   providers: [AgentService],
   exports: [AgentService],
