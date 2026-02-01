@@ -26,6 +26,12 @@ export class TasksController {
     return this.tasksService.processCronTick();
   }
 
+  @Post('admin/initialize-schedules')
+  @UseGuards(CronGuard)
+  async initializeSchedules() {
+    return this.tasksService.initializeNextRunTimes();
+  }
+
   // ========== User Endpoints (JWT Auth) ==========
 
   @Post()

@@ -8,7 +8,7 @@
   "crons": [
     {
       "path": "/api/tasks/cron/tick",
-      "schedule": "0 * * * *"
+      "schedule": "* * * * *"
     }
   ]
 }

@@ -26,39 +26,33 @@ export class TasksService implements OnModuleInit {
     if (!this.isVercel) {
       await this.loadLocalScheduler();
     }
-    // Initialize nextRunAt for tasks that don't have it set
-    await this.initializeNextRunTimes();
   }
 
   /**
-   * Initialize/update nextRunAt for tasks that need it (NULL or expired)
+   * Initialize nextRunAt for tasks where it is NULL.
+   * Only fixes missing schedules — does not advance expired ones.
    */
-  private async initializeNextRunTimes() {
-    const now = new Date();
-    const nowTs = now.getTime();
-
-    // Get all active tasks (parseDate in rowToTask handles both ISO string and timestamp)
+  async initializeNextRunTimes(): Promise<{ updated: number; total: number }> {
     const allActiveTasks = await this.db.findAllTasks({ isActive: true });
 
-    // Filter tasks needing update (nextRunAt is null or expired)
-    const tasksNeedingUpdate = allActiveTasks.filter((task) => {
-      if (!task.nextRunAt) return true;
-      return task.nextRunAt.getTime() <= nowTs;
-    });
+    // Only fix tasks with NULL nextRunAt
+    const tasksNeedingUpdate = allActiveTasks.filter((task) => !task.nextRunAt);
 
     this.logger.log(
-      `Found ${tasksNeedingUpdate.length} tasks needing nextRunAt update (out of ${allActiveTasks.length} active)`,
+      `[init] Found ${tasksNeedingUpdate.length} tasks with NULL nextRunAt (out of ${allActiveTasks.length} active)`,
     );
 
     for (const task of tasksNeedingUpdate) {
       try {
         const nextRun = this.calculateNextRunTime(task.cronSchedule, task.timezone);
         await this.db.updateTask(task.id, { nextRunAt: nextRun });
-        this.logger.log(`Updated nextRunAt for task ${task.id}: ${nextRun.toISOString()}`);
+        this.logger.log(`[init] task=${task.id} nextRunAt=${nextRun.toISOString()}`);
       } catch (e) {
-        this.logger.warn(`Failed to update nextRunAt for task ${task.id}`, e);
+        this.logger.warn(`[init] task=${task.id} failed to compute nextRunAt`, e);
       }
     }
+
+    return { updated: tasksNeedingUpdate.length, total: allActiveTasks.length };
   }
 
   /**
@@ -77,16 +71,19 @@ export class TasksService implements OnModuleInit {
       this.schedulerRegistry.deleteCronJob(jobName);
     }
 
-    const job = new CronJob(task.cronSchedule, async () => {
-      this.logger.log(`[Local] Executing task: ${task.name}`);
-      try {
-        // Use the same execution flow as Vercel Cron
-        const execution = await this.startExecution(task);
-        await this.executeTaskAsync(task, execution.id);
-        await this.db.updateTask(task.id, { lastRunAt: new Date() });
-      } catch (e) {
-        this.logger.error(`[Local] Task ${task.name} failed`, e);
-      }
+    const job = CronJob.from({
+      cronTime: task.cronSchedule,
+      onTick: async () => {
+        this.logger.log(`[local] task=${task.id} name="${task.name}" status=started`);
+        try {
+          const execution = await this.startExecution(task);
+          await this.executeTaskAsync(task, execution.id);
+          await this.db.updateTask(task.id, { lastRunAt: new Date() });
+        } catch (e) {
+          this.logger.error(`[local] task=${task.id} name="${task.name}" status=error`, e);
+        }
+      },
+      timeZone: task.timezone || 'UTC',
     });
 
     this.schedulerRegistry.addCronJob(jobName, job as any);
@@ -97,6 +94,8 @@ export class TasksService implements OnModuleInit {
    * Core method: Called by Vercel Cron every minute
    * Checks and executes all due tasks
    */
+  private static readonly COMPENSATION_WINDOW_MS = 60 * 60 * 1000; // 60 minutes
+
   async processCronTick(): Promise<{
     executedCount: number;
     tasks: Array<{ id: number; name: string; status: string; executionId?: string; error?: string }>;
@@ -104,16 +103,16 @@ export class TasksService implements OnModuleInit {
   }> {
     const now = new Date();
     const nowTs = now.getTime();
-    this.logger.log(`Processing cron tick at ${now.toISOString()} (timestamp: ${nowTs})`);
+    this.logger.log(`[cron] tick at=${now.toISOString()}`);
 
-    // Debug: log all active tasks for diagnosis
+    // Debug: log all active tasks
     const allActive = await this.db.findAllTasks({ isActive: true });
-    this.logger.log(`[DEBUG] Total active tasks: ${allActive.length}`);
+    this.logger.debug(`[cron] active_tasks=${allActive.length}`);
     for (const t of allActive) {
       const nextRunTs = t.nextRunAt?.getTime() || null;
       const isDue = nextRunTs !== null && nextRunTs <= nowTs;
-      this.logger.log(
-        `[DEBUG] Task ${t.id} (${t.name}): nextRunAt=${t.nextRunAt?.toISOString() || 'NULL'} (ts: ${nextRunTs}), now=${nowTs}, isDue=${isDue}`,
+      this.logger.debug(
+        `[cron] task=${t.id} name="${t.name}" cron=${t.cronSchedule} tz=${t.timezone || 'UTC'} nextRunAt=${t.nextRunAt?.toISOString() || 'NULL'} isDue=${isDue}`,
       );
     }
 
@@ -123,18 +122,33 @@ export class TasksService implements OnModuleInit {
       nextRunAtLessThan: now,
     });
 
-    this.logger.log(`Found ${dueTasks.length} due tasks`);
+    this.logger.log(`[cron] due_tasks=${dueTasks.length}`);
 
     const results: Array<{ id: number; name: string; status: string; executionId?: string; error?: string }> = [];
 
     for (const task of dueTasks) {
+      const overdueMs = task.nextRunAt ? nowTs - task.nextRunAt.getTime() : 0;
+
+      // Compensation: skip execution for tasks overdue beyond the window
+      if (overdueMs > TasksService.COMPENSATION_WINDOW_MS) {
+        this.logger.warn(
+          `[cron] task=${task.id} name="${task.name}" overdueMs=${overdueMs} status=skipped (beyond ${TasksService.COMPENSATION_WINDOW_MS}ms window)`,
+        );
+        await this.updateNextRunTime(task);
+        results.push({ id: task.id, name: task.name, status: 'skipped' });
+        continue;
+      }
+
       try {
-        // Create execution record
         const execution = await this.startExecution(task);
+
+        this.logger.log(
+          `[cron] task=${task.id} executionId=${execution.id} cron=${task.cronSchedule} tz=${task.timezone || 'UTC'} nextRunAt=${task.nextRunAt?.toISOString()} overdueMs=${overdueMs} status=started`,
+        );
 
         // Execute task asynchronously (don't await completion)
         this.executeTaskAsync(task, execution.id).catch((err) => {
-          this.logger.error(`Async task execution failed for task ${task.id}`, err);
+          this.logger.error(`[cron] task=${task.id} executionId=${execution.id} status=async_error`, err);
         });
 
         // Update nextRunAt for next execution
@@ -147,7 +161,7 @@ export class TasksService implements OnModuleInit {
           executionId: execution.id,
         });
       } catch (error: any) {
-        this.logger.error(`Failed to start task ${task.id}`, error);
+        this.logger.error(`[cron] task=${task.id} status=error error=${error.message}`);
         results.push({
           id: task.id,
           name: task.name,
@@ -291,20 +305,20 @@ export class TasksService implements OnModuleInit {
    * Execute task asynchronously
    */
   private async executeTaskAsync(task: Task, executionId: string): Promise<void> {
+    const startMs = Date.now();
     try {
-      this.logger.log(`Executing task: ${task.name}`);
+      this.logger.log(`[exec] task=${task.id} executionId=${executionId} status=running`);
 
-      // Fetch associated topics
       const topics = await this.db.findTaskTopics(task.id);
 
-      // Run agent with topics context
       const result = await this.agentService.runAgent(task.prompt, {
         topicsContext: topics,
         executionId,
-        taskId: task.id, // Pass taskId to agent context
+        taskId: task.id,
       });
 
       const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      const durationMs = Date.now() - startMs;
 
       await this.db.updateExecution(executionId, {
         status: 'success',
@@ -312,9 +326,10 @@ export class TasksService implements OnModuleInit {
         completedAt: new Date(),
       });
 
-      this.logger.log(`Task ${task.name} completed successfully`);
+      this.logger.log(`[exec] task=${task.id} executionId=${executionId} status=success durationMs=${durationMs}`);
     } catch (error: any) {
-      this.logger.error(`Task ${task.name} failed`, error);
+      const durationMs = Date.now() - startMs;
+      this.logger.error(`[exec] task=${task.id} executionId=${executionId} status=error durationMs=${durationMs} error=${error.message}`);
       await this.db.updateExecution(executionId, {
         status: 'error',
         result: error.message,
