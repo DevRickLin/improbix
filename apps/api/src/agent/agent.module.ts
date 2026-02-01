@@ -9,9 +9,10 @@ import { EmailModule } from '../email/email.module';
 import { SandboxModule } from '../sandbox/sandbox.module';
 import { SimilarWebModule } from '../similarweb/similarweb.module';
 import { ConfigModule } from '@nestjs/config';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule, SandboxModule, SimilarWebModule],
+  imports: [ConfigModule, FeishuModule, EmailModule, SearchModule, ReportsModule, DatabaseModule, SandboxModule, SimilarWebModule, QueueModule],
   controllers: [AgentController],
   providers: [AgentService],
   exports: [AgentService],

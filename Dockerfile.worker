@@ -1,0 +1,21 @@
+FROM node:24-slim
+
+# Enable corepack for pnpm
+RUN corepack enable
+
+WORKDIR /app
+
+# Copy workspace config
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+# Copy API package
+COPY apps/api/ apps/api/
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile --filter=@improbix/api
+
+# Build
+RUN pnpm build:api
+
+# Run worker
+CMD ["node", "apps/api/dist/src/worker.js"]

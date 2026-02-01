@@ -6,12 +6,15 @@ import { DatabaseService, Task, TaskExecution, TopicWithSources } from '../datab
 import { AgentService } from '../agent/agent.service';
 import { ReportsService } from '../reports/reports.service';
 import { EmailService } from '../email/email.service';
+import { QueueService } from '../queue/queue.service';
 import { randomUUID } from 'crypto';
+import { generateId } from 'ai';
 
 @Injectable()
 export class TasksService implements OnModuleInit {
   private readonly logger = new Logger(TasksService.name);
   private readonly isVercel = process.env.VERCEL === '1';
+  private readonly useWorkerQueue: boolean;
 
   constructor(
     @Inject(DatabaseService) private db: DatabaseService,
@@ -19,7 +22,10 @@ export class TasksService implements OnModuleInit {
     @Inject(AgentService) private agentService: AgentService,
     @Inject(ReportsService) private reportsService: ReportsService,
     @Inject(EmailService) private emailService: EmailService,
-  ) {}
+    @Inject(QueueService) private queueService: QueueService,
+  ) {
+    this.useWorkerQueue = this.queueService.isAvailable && process.env.WORKER_MODE !== 'inline';
+  }
 
   async onModuleInit() {
     // Only use in-memory scheduling for local development
@@ -146,10 +152,24 @@ export class TasksService implements OnModuleInit {
           `[cron] task=${task.id} executionId=${execution.id} cron=${task.cronSchedule} tz=${task.timezone || 'UTC'} nextRunAt=${task.nextRunAt?.toISOString()} overdueMs=${overdueMs} status=started`,
         );
 
-        // Execute task asynchronously (don't await completion)
-        this.executeTaskAsync(task, execution.id).catch((err) => {
-          this.logger.error(`[cron] task=${task.id} executionId=${execution.id} status=async_error`, err);
-        });
+        // Execute task: enqueue to worker if available, otherwise fire-and-forget
+        if (this.useWorkerQueue) {
+          const topics = await this.db.findTaskTopics(task.id);
+          await this.queueService.enqueueJob({
+            type: 'task',
+            streamId: generateId(),
+            payload: {
+              taskId: task.id,
+              executionId: execution.id,
+              prompt: task.prompt,
+              topicsContext: topics,
+            },
+          });
+        } else {
+          this.executeTaskAsync(task, execution.id).catch((err) => {
+            this.logger.error(`[cron] task=${task.id} executionId=${execution.id} status=async_error`, err);
+          });
+        }
 
         // Update nextRunAt for next execution
         await this.updateNextRunTime(task);
@@ -222,10 +242,18 @@ export class TasksService implements OnModuleInit {
           startedAt: new Date(),
         });
 
-        // Execute asynchronously
-        this.executeEmailTask(executionId, prompt, email.id).catch((err) => {
-          this.logger.error(`Email task execution failed for ${email.id}`, err);
-        });
+        // Execute: enqueue to worker if available, otherwise fire-and-forget
+        if (this.useWorkerQueue) {
+          await this.queueService.enqueueJob({
+            type: 'email',
+            streamId: generateId(),
+            payload: { executionId, prompt, emailId: email.id },
+          });
+        } else {
+          this.executeEmailTask(executionId, prompt, email.id).catch((err) => {
+            this.logger.error(`Email task execution failed for ${email.id}`, err);
+          });
+        }
       }
 
       // Update check state
@@ -389,8 +417,21 @@ export class TasksService implements OnModuleInit {
     }
     const execution = await this.startExecution(task);
 
-    // Execute asynchronously
-    this.executeTaskAsync(task, execution.id);
+    if (this.useWorkerQueue) {
+      const topics = await this.db.findTaskTopics(task.id);
+      await this.queueService.enqueueJob({
+        type: 'task',
+        streamId: generateId(),
+        payload: {
+          taskId: task.id,
+          executionId: execution.id,
+          prompt: task.prompt,
+          topicsContext: topics,
+        },
+      });
+    } else {
+      this.executeTaskAsync(task, execution.id);
+    }
 
     return execution;
   }

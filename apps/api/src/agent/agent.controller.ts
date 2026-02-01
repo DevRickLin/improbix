@@ -6,9 +6,11 @@ import { AgentService } from './agent.service';
 import { DatabaseService, TopicWithSources } from '../database/database.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { REDIS_CLIENT } from '../redis/redis.module';
+import { QueueService } from '../queue/queue.service';
 
 const STREAM_TTL_SECONDS = 300; // 5 minutes
 const STREAM_KEY_PREFIX = 'stream:';
+const RELAY_POLL_INTERVAL_MS = 200;
 
 interface UIMessagePart {
   type: string;
@@ -31,12 +33,18 @@ interface ChatRequestBody {
 @Controller('agent')
 export class AgentController {
   private readonly logger = new Logger(AgentController.name);
+  private readonly useWorker: boolean;
 
   constructor(
     @Inject(AgentService) private readonly agentService: AgentService,
     @Inject(DatabaseService) private readonly db: DatabaseService,
+    @Inject(QueueService) private readonly queueService: QueueService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
-  ) {}
+  ) {
+    // Use worker mode when Redis is available and not explicitly set to inline
+    this.useWorker = this.queueService.isAvailable && process.env.WORKER_MODE !== 'inline';
+    this.logger.log(`Agent controller mode: ${this.useWorker ? 'worker (queue + relay)' : 'inline'}`);
+  }
 
   @Post('chat')
   @UseGuards(JwtAuthGuard)
@@ -99,138 +107,13 @@ export class AgentController {
       }
 
       const chatId = sessionId;
-
-      // Create a streamId and save it for resume support
       const streamId = generateId();
       await this.db.createStreamId(streamId, chatId);
 
-      const result = await this.agentService.streamChat(modelMessages, {
-        topicsContext,
-        onFinish: async ({ response }) => {
-          try {
-            // Save assistant response messages
-            const assistantMessages = (response.messages || [])
-              .filter((msg: any) => msg.role === 'assistant')
-              .map((msg: any) => {
-                // Convert response message content to parts format
-                const parts: UIMessagePart[] = [];
-                if (typeof msg.content === 'string') {
-                  parts.push({ type: 'text', text: msg.content });
-                } else if (Array.isArray(msg.content)) {
-                  for (const part of msg.content) {
-                    if (part.type === 'text') {
-                      parts.push({ type: 'text', text: part.text });
-                    } else if (part.type === 'tool-call') {
-                      parts.push({
-                        type: 'tool-invocation',
-                        toolName: part.toolName,
-                        toolCallId: part.toolCallId,
-                        args: part.args,
-                        state: 'call',
-                      });
-                    }
-                  }
-                }
-                return {
-                  id: generateId(),
-                  chatId,
-                  role: 'assistant',
-                  parts,
-                  attachments: [],
-                  createdAt: new Date().toISOString(),
-                };
-              });
-
-            // Also handle tool result messages
-            const toolMessages = (response.messages || [])
-              .filter((msg: any) => msg.role === 'tool')
-              .map((msg: any) => ({
-                id: generateId(),
-                chatId,
-                role: 'tool',
-                parts: Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: String(msg.content) }],
-                attachments: [],
-                createdAt: new Date().toISOString(),
-              }));
-
-            if (assistantMessages.length > 0 || toolMessages.length > 0) {
-              await this.db.saveMessages([...assistantMessages, ...toolMessages]);
-            }
-          } catch (e) {
-            this.logger.warn(`Failed to save assistant messages: ${e}`);
-          }
-
-          // Clean up stream from Redis after finish
-          try {
-            await this.db.deleteStreamId(streamId);
-            if (this.redis) {
-              await this.redis.del(`${STREAM_KEY_PREFIX}${streamId}`);
-            }
-          } catch (e) {
-            this.logger.warn(`Failed to clean up stream: ${e}`);
-          }
-        },
-      });
-
-      result.consumeStream();
-
-      // If Redis is available, tee the stream to buffer chunks for resume
-      if (this.redis) {
-        const originalResponse = result.toUIMessageStreamResponse({
-          headers: {
-            'Cache-Control': 'no-cache, no-transform',
-            'X-Accel-Buffering': 'no',
-          },
-        });
-
-        const body = originalResponse.body;
-        if (body) {
-          const [clientStream, cacheStream] = body.tee();
-
-          // Buffer cache stream chunks to Redis in background
-          this.bufferStreamToRedis(streamId, cacheStream).catch((e) => {
-            this.logger.warn(`Failed to buffer stream to Redis: ${e}`);
-          });
-
-          // Send headers from original response
-          res.status(originalResponse.status);
-          originalResponse.headers.forEach((value, key) => {
-            res.setHeader(key, value);
-          });
-
-          // Pipe client stream to response
-          const reader = clientStream.getReader();
-          const pump = async () => {
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                  res.end();
-                  return;
-                }
-                res.write(value);
-              }
-            } catch (e) {
-              this.logger.warn(`Stream pipe error: ${e}`);
-              if (!res.headersSent) {
-                res.status(500).end();
-              } else {
-                res.end();
-              }
-            }
-          };
-          await pump();
-        } else {
-          res.status(200).end();
-        }
+      if (this.useWorker) {
+        await this.handleChatViaWorker(res, streamId, chatId, modelMessages, topicsContext);
       } else {
-        // No Redis — just pipe directly
-        result.pipeUIMessageStreamToResponse(res, {
-          headers: {
-            'Cache-Control': 'no-cache, no-transform',
-            'X-Accel-Buffering': 'no',
-          },
-        });
+        await this.handleChatInline(res, streamId, chatId, modelMessages, topicsContext);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -241,16 +124,164 @@ export class AgentController {
     }
   }
 
+  /**
+   * Worker mode: enqueue job to Redis, then relay stream chunks via SSE
+   */
+  private async handleChatViaWorker(
+    res: Response,
+    streamId: string,
+    chatId: string,
+    modelMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    topicsContext?: TopicWithSources[],
+  ) {
+    // Enqueue the job for the worker to pick up
+    await this.queueService.enqueueJob({
+      type: 'chat',
+      streamId,
+      payload: { chatId, modelMessages, topicsContext },
+    });
+
+    // Set up SSE headers and relay chunks from Redis
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Stream-Id', streamId);
+    res.status(200);
+
+    let offset = 0;
+    let finished = false;
+
+    const relay = async () => {
+      try {
+        while (!finished) {
+          const chunks = await this.queueService.getStreamChunks(streamId, offset);
+
+          for (const chunk of chunks) {
+            if (this.queueService.isDoneMarker(chunk)) {
+              finished = true;
+              break;
+            }
+            if (this.queueService.isErrorMarker(chunk)) {
+              const errorMsg = this.queueService.getErrorMessage(chunk);
+              this.logger.warn(`Worker error for stream ${streamId}: ${errorMsg}`);
+              finished = true;
+              break;
+            }
+            res.write(chunk);
+            offset++;
+          }
+
+          if (!finished) {
+            await new Promise((resolve) => setTimeout(resolve, RELAY_POLL_INTERVAL_MS));
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Relay error for stream ${streamId}: ${e}`);
+      }
+      res.end();
+    };
+
+    // Handle client disconnect
+    res.on('close', () => {
+      finished = true;
+    });
+
+    await relay();
+  }
+
+  /**
+   * Inline mode: execute agent directly (for local development)
+   */
+  private async handleChatInline(
+    res: Response,
+    streamId: string,
+    chatId: string,
+    modelMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    topicsContext?: TopicWithSources[],
+  ) {
+    const result = await this.agentService.streamChat(modelMessages, {
+      topicsContext,
+      onFinish: async ({ response }) => {
+        try {
+          await this.saveAssistantMessages(chatId, response);
+        } catch (e) {
+          this.logger.warn(`Failed to save assistant messages: ${e}`);
+        }
+
+        try {
+          await this.db.deleteStreamId(streamId);
+          if (this.redis) {
+            await this.redis.del(`${STREAM_KEY_PREFIX}${streamId}`);
+          }
+        } catch (e) {
+          this.logger.warn(`Failed to clean up stream: ${e}`);
+        }
+      },
+    });
+
+    result.consumeStream();
+
+    if (this.redis) {
+      const originalResponse = result.toUIMessageStreamResponse({
+        headers: {
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+
+      const body = originalResponse.body;
+      if (body) {
+        const [clientStream, cacheStream] = body.tee();
+
+        this.bufferStreamToRedis(streamId, cacheStream).catch((e) => {
+          this.logger.warn(`Failed to buffer stream to Redis: ${e}`);
+        });
+
+        res.status(originalResponse.status);
+        originalResponse.headers.forEach((value, key) => {
+          res.setHeader(key, value);
+        });
+
+        const reader = clientStream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              return;
+            }
+            res.write(value);
+          }
+        } catch (e) {
+          this.logger.warn(`Stream pipe error: ${e}`);
+          if (!res.headersSent) {
+            res.status(500).end();
+          } else {
+            res.end();
+          }
+        }
+      } else {
+        res.status(200).end();
+      }
+    } else {
+      result.pipeUIMessageStreamToResponse(res, {
+        headers: {
+          'Cache-Control': 'no-cache, no-transform',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+  }
+
   @Get('chat/:chatId/stream')
   @UseGuards(JwtAuthGuard)
   async resumeStream(@Param('chatId') chatId: string, @Res() res: Response) {
     try {
-      // Look up latest streamId for this chat
       const streamIds = await this.db.getStreamIdsByChatId(chatId);
       const latestStreamId = streamIds.at(-1);
 
       if (!latestStreamId || !this.redis) {
-        // No active stream — return 204 so AI SDK gives up gracefully
         return res.status(204).end();
       }
 
@@ -261,13 +292,16 @@ export class AgentController {
         return res.status(204).end();
       }
 
-      // Pipe buffered chunks as SSE
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Connection', 'keep-alive');
 
       for (const chunk of chunks) {
+        // Skip internal markers when relaying to client
+        if (typeof chunk === 'string' && (this.queueService.isDoneMarker(chunk) || this.queueService.isErrorMarker(chunk))) {
+          continue;
+        }
         res.write(chunk);
       }
       res.end();
@@ -288,6 +322,55 @@ export class AgentController {
     }
     const result = await this.agentService.runAgent(task);
     return { status: 'completed', result };
+  }
+
+  saveAssistantMessages(chatId: string, response: any): Promise<void> {
+    const assistantMessages = (response.messages || [])
+      .filter((msg: any) => msg.role === 'assistant')
+      .map((msg: any) => {
+        const parts: UIMessagePart[] = [];
+        if (typeof msg.content === 'string') {
+          parts.push({ type: 'text', text: msg.content });
+        } else if (Array.isArray(msg.content)) {
+          for (const part of msg.content) {
+            if (part.type === 'text') {
+              parts.push({ type: 'text', text: part.text });
+            } else if (part.type === 'tool-call') {
+              parts.push({
+                type: 'tool-invocation',
+                toolName: part.toolName,
+                toolCallId: part.toolCallId,
+                args: part.args,
+                state: 'call',
+              });
+            }
+          }
+        }
+        return {
+          id: generateId(),
+          chatId,
+          role: 'assistant',
+          parts,
+          attachments: [],
+          createdAt: new Date().toISOString(),
+        };
+      });
+
+    const toolMessages = (response.messages || [])
+      .filter((msg: any) => msg.role === 'tool')
+      .map((msg: any) => ({
+        id: generateId(),
+        chatId,
+        role: 'tool',
+        parts: Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: String(msg.content) }],
+        attachments: [],
+        createdAt: new Date().toISOString(),
+      }));
+
+    if (assistantMessages.length > 0 || toolMessages.length > 0) {
+      return this.db.saveMessages([...assistantMessages, ...toolMessages]);
+    }
+    return Promise.resolve();
   }
 
   private async bufferStreamToRedis(streamId: string, stream: ReadableStream<Uint8Array>) {

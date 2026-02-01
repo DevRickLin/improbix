@@ -10,7 +10,8 @@
     "dev:api": "turbo run dev --filter=@improbix/api",
     "dev:web": "turbo run dev --filter=@improbix/web",
     "build:api": "turbo run build --filter=@improbix/api",
-    "build:web": "turbo run build --filter=@improbix/web"
+    "build:web": "turbo run build --filter=@improbix/web",
+    "start:worker": "turbo run start:worker --filter=@improbix/api"
   },
   "devDependencies": {
     "dotenv-cli": "^11.0.0",
