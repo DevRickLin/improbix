@@ -28,15 +28,14 @@ export class QueueService {
 
   async enqueueJob(job: AgentJob): Promise<void> {
     if (!this.redis) throw new Error('Redis not configured');
-    await this.redis.rpush(JOB_QUEUE_KEY, JSON.stringify(job));
+    await this.redis.rpush(JOB_QUEUE_KEY, job);
     this.logger.log(`Enqueued job: type=${job.type} streamId=${job.streamId}`);
   }
 
   async pollJob(): Promise<AgentJob | null> {
     if (!this.redis) return null;
-    const raw = await this.redis.lpop<string>(JOB_QUEUE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AgentJob;
+    const raw = await this.redis.lpop<AgentJob>(JOB_QUEUE_KEY);
+    return raw ?? null;
   }
 
   async pushStreamChunk(streamId: string, chunk: string): Promise<void> {
