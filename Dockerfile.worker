@@ -5,16 +5,13 @@ RUN corepack enable
 
 WORKDIR /app
 
-# Copy workspace config
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+# Copy full workspace (needed for hoisted dependencies)
+COPY . .
 
-# Copy API package
-COPY apps/api/ apps/api/
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile --filter=@improbix/api
-
-# Build
+# Build API
 RUN pnpm build:api
 
 # Run worker
