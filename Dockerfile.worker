@@ -6,7 +6,7 @@ RUN corepack enable
 WORKDIR /app
 
 # Copy workspace config
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 
 # Copy API package
 COPY apps/api/ apps/api/
