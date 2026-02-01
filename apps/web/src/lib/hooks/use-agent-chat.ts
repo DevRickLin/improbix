@@ -6,6 +6,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import { useHistoryStore } from '@/stores/history-store';
 import { useAuthStore } from '@/stores/auth-store';
+import { sessionsApi } from '@/lib/api/sessions';
 import type { ExecutionHistory } from '@/types/history';
 
 interface UseAgentChatOptions {
@@ -111,8 +112,9 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const { addExecution, updateExecution } = useHistoryStore();
   const { token } = useAuthStore();
   const currentExecutionId = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
-  // Create transport with auth headers and taskId
+  // Create transport with auth headers
   // 注意：使用 prepareSendMessagesRequest 而不是 body，因为 DefaultChatTransport 的 body 参数有 bug
   // 参考：https://github.com/vercel/ai/issues/7109
   const transport = useMemo(() => {
@@ -122,10 +124,11 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       api: chatEndpoint,
       headers,
       prepareSendMessagesRequest({ messages }) {
-        // 动态构建请求体，确保每次发送时都能获取最新的 taskId
+        const lastMessage = messages.at(-1);
         return {
           body: {
-            messages,
+            message: lastMessage,
+            sessionId: sessionIdRef.current,
             taskId: taskId ?? undefined,
           },
         };
@@ -187,6 +190,16 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       };
       addExecution(execution);
 
+      // Create a session for this execution
+      const sessionId = crypto.randomUUID();
+      try {
+        await sessionsApi.create(sessionId, taskName);
+        sessionIdRef.current = sessionId;
+      } catch {
+        toast.error('Failed to create session');
+        throw new Error('Failed to create session');
+      }
+
       // Send message to start the chat
       try {
         await sendMessage({
@@ -206,6 +219,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const reset = useCallback(() => {
     setMessages([]);
     currentExecutionId.current = null;
+    sessionIdRef.current = null;
   }, [setMessages]);
 
   return {
