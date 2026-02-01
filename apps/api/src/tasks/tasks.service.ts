@@ -13,7 +13,6 @@ import { generateId } from 'ai';
 @Injectable()
 export class TasksService implements OnModuleInit {
   private readonly logger = new Logger(TasksService.name);
-  private readonly isVercel = process.env.VERCEL === '1';
   private readonly useWorkerQueue: boolean;
 
   constructor(
@@ -28,8 +27,8 @@ export class TasksService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // Only use in-memory scheduling for local development
-    if (!this.isVercel) {
+    // Only use in-memory scheduling for local development (no Redis queue)
+    if (!this.useWorkerQueue) {
       await this.loadLocalScheduler();
     }
   }
@@ -400,7 +399,7 @@ export class TasksService implements OnModuleInit {
     }
 
     // For local development, also schedule in-memory
-    if (!this.isVercel) {
+    if (!this.useWorkerQueue) {
       this.scheduleLocalTask(savedTask);
     }
 
@@ -461,7 +460,7 @@ export class TasksService implements OnModuleInit {
     await this.db.deleteTask(id);
 
     // For local development, also remove from scheduler
-    if (!this.isVercel) {
+    if (!this.useWorkerQueue) {
       const jobName = `task-${id}`;
       if (this.schedulerRegistry.doesExist('cron', jobName)) {
         this.schedulerRegistry.deleteCronJob(jobName);
@@ -507,7 +506,7 @@ export class TasksService implements OnModuleInit {
     }
 
     // For local development, reschedule if needed
-    if (!this.isVercel && (data.cronSchedule || data.isActive !== undefined)) {
+    if (!this.useWorkerQueue && (data.cronSchedule || data.isActive !== undefined)) {
       const task = await this.db.findTaskById(id);
       if (task) {
         const jobName = `task-${id}`;
