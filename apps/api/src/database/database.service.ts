@@ -85,7 +85,7 @@ export class DatabaseService implements OnModuleInit {
     const tursoToken = this.configService.get<string>('TURSO_AUTH_TOKEN');
 
     try {
-      if (this.isVercel && tursoUrl) {
+      if (tursoUrl) {
         this.logger.log('Connecting to Turso database...');
         this.client = createClient({
           url: tursoUrl,
